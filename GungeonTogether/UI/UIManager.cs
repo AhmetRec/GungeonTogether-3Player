@@ -12,9 +12,12 @@ namespace GungeonTogether.UI
 		private static GameObject _root;
 		private static dfPanel _panel;
 		private static dfLabel _statusLabel;
-		private static dfButton _hostButton;
 		private static dfButton _inviteButton;
 		private static dfButton _leaveButton;
+		private static dfButton _mainMenuHostButton;
+		private static MainMenuFoyerController _mainMenuController;
+		private static bool _singlePlayerHandlerAttached;
+		private static bool _launchingHostedGame;
 		
 		private static dfPanel _playerListPanel;
 		private static dfScrollPanel _playerScrollPanel;
@@ -32,6 +35,18 @@ namespace GungeonTogether.UI
 			{
 				GameManager gameManager = Object.FindObjectOfType<GameManager>();
 				if (gameManager == null) return;
+
+				EnsureMainMenuHostButton();
+				bool onMainMenu = Foyer.DoMainMenu;
+				SetMainMenuHostVisible(onMainMenu);
+				if (onMainMenu)
+				{
+					SetVisible(false);
+					if (SteamLobbyManager.Instance.IsInLobby && NetworkManager.Instance.IsClient)
+						EnterJoinedGameFromMainMenu();
+					return;
+				}
+
 				if (!gameManager.IsFoyer)
 				{
 					SetVisible(false);
@@ -39,10 +54,97 @@ namespace GungeonTogether.UI
 				}
 
 				EnsureBuilt();
+				bool showLobbyPanel = SteamLobbyManager.Instance.IsInLobby || NetworkManager.Instance.IsConnected;
+				SetVisible(showLobbyPanel);
+				if (!showLobbyPanel) return;
 				UpdateStatus();
 				SubscribeEvents();
 			}
 			catch { }
+		}
+
+		private static void EnsureMainMenuHostButton()
+		{
+			var mm = Object.FindObjectOfType<MainMenuFoyerController>();
+			if (mm == null || mm.NewGameButton == null) return;
+
+			if (_mainMenuController != mm || _mainMenuHostButton == null)
+			{
+				if (_mainMenuController != mm)
+					_singlePlayerHandlerAttached = false;
+				_mainMenuController = mm;
+				dfControl parent = mm.NewGameButton.Parent;
+				if (parent == null && mm.NewGameButton.transform.parent != null)
+					parent = mm.NewGameButton.transform.parent.GetComponent<dfControl>();
+				if (parent == null) return;
+
+				_mainMenuHostButton = CreateButtonFromTemplate(
+					mm.NewGameButton.GUIManager,
+					parent,
+					mm.NewGameButton,
+					"GT_MainMenuHostButton",
+					"HOST LOBBY",
+					mm.NewGameButton.RelativePosition.x,
+					mm.NewGameButton.RelativePosition.y,
+					mm.NewGameButton.Width,
+					mm.NewGameButton.Height);
+				_mainMenuHostButton.Click += OnMainMenuHostClicked;
+				_mainMenuHostButton.GotFocus += OnMainMenuHostFocused;
+
+				var keyControls = _mainMenuHostButton.gameObject.AddComponent<UIKeyControls>();
+				keyControls.selectOnAction = true;
+				keyControls.clearRepeatingOnSelect = true;
+
+				if (!_singlePlayerHandlerAttached)
+				{
+					mm.NewGameButton.Click += OnSinglePlayerClicked;
+					_singlePlayerHandlerAttached = true;
+				}
+				Debug.Log("[UI] Main-menu HOST LOBBY button created.");
+			}
+
+			LayoutMainMenuButtons(mm);
+			_mainMenuHostButton.IsEnabled = !NetworkManager.Instance.IsConnected && !SteamLobbyManager.Instance.IsInLobby;
+		}
+
+		private static void LayoutMainMenuButtons(MainMenuFoyerController mm)
+		{
+			if (_mainMenuHostButton == null || mm.QuitGameButton == null) return;
+			float x = mm.QuitGameButton.RelativePosition.x;
+			float quitY = mm.QuitGameButton.RelativePosition.y;
+
+			mm.ContinueGameButton.RelativePosition = mm.ContinueGameButton.RelativePosition.WithX(x).WithY(quitY - 204f);
+			mm.NewGameButton.RelativePosition = mm.NewGameButton.RelativePosition.WithX(x).WithY(quitY - 153f);
+			_mainMenuHostButton.RelativePosition = _mainMenuHostButton.RelativePosition.WithX(x).WithY(quitY - 102f);
+			mm.ControlsButton.RelativePosition = mm.ControlsButton.RelativePosition.WithX(x).WithY(quitY - 51f);
+
+			var buttons = new List<dfButton>();
+			if (mm.ContinueGameButton.IsEnabled && mm.ContinueGameButton.IsVisible)
+				buttons.Add(mm.ContinueGameButton);
+			buttons.Add(mm.NewGameButton);
+			buttons.Add(_mainMenuHostButton);
+			buttons.Add(mm.ControlsButton);
+			buttons.Add(mm.QuitGameButton);
+
+			for (int i = 0; i < buttons.Count; i++)
+			{
+				var current = buttons[i];
+				var previous = buttons[(i + buttons.Count - 1) % buttons.Count];
+				var next = buttons[(i + 1) % buttons.Count];
+				var controls = current.GetComponent<UIKeyControls>();
+				if (controls == null) controls = current.gameObject.AddComponent<UIKeyControls>();
+				controls.up = previous;
+				controls.down = next;
+			}
+		}
+
+		private static void SetMainMenuHostVisible(bool visible)
+		{
+			if (_mainMenuHostButton != null)
+			{
+				_mainMenuHostButton.IsVisible = visible;
+				_mainMenuHostButton.IsInteractive = visible;
+			}
 		}
 
 		private static void EnsureBuilt()
@@ -102,7 +204,7 @@ namespace GungeonTogether.UI
 
 			Debug.Log($"[UI] Status label created: Position={_statusLabel.RelativePosition}, Size={_statusLabel.Width}x{_statusLabel.Height}");
 
-			// Layout buttons vertically within the panel
+			// Lobby controls are only shown after hosting or joining.
 			float currentY = _statusLabel.RelativePosition.y + _statusLabel.Height + 10f;
 			float buttonWidth = (_panel.Width - 30f) / 2f;
 			float buttonHeight = 40f;
@@ -110,17 +212,11 @@ namespace GungeonTogether.UI
 
 			Debug.Log($"[UI] Button layout: currentY={currentY}, buttonWidth={buttonWidth}, buttonHeight={buttonHeight}, spacing={buttonSpacing}");
 
-		_hostButton = CreateButtonFromTemplate(gui, _panel, template, "GT_HostButton", "HOST LOBBY", 10f, currentY, buttonWidth, buttonHeight);
-		_hostButton.Click += OnHostClicked;
-		Debug.Log($"[UI] Host button created: Position={_hostButton.RelativePosition}, Size={_hostButton.Width}x{_hostButton.Height}, Visible={_hostButton.IsVisible}");
-
-		_inviteButton = CreateButtonFromTemplate(gui, _panel, template, "GT_InviteButton", "INVITE", 10f + buttonWidth + buttonSpacing, currentY, buttonWidth, buttonHeight);
+		_inviteButton = CreateButtonFromTemplate(gui, _panel, template, "GT_InviteButton", "INVITE", 10f, currentY, buttonWidth, buttonHeight);
 		_inviteButton.Click += OnInviteClicked;
 		Debug.Log($"[UI] Invite button created: Position={_inviteButton.RelativePosition}, Size={_inviteButton.Width}x{_inviteButton.Height}, Visible={_inviteButton.IsVisible}");
 
-		currentY += buttonHeight + buttonSpacing;
-
-		_leaveButton = CreateButtonFromTemplate(gui, _panel, template, "GT_LeaveButton", "LEAVE", 10f, currentY, buttonWidth, buttonHeight);
+		_leaveButton = CreateButtonFromTemplate(gui, _panel, template, "GT_LeaveButton", "LEAVE", 10f + buttonWidth + buttonSpacing, currentY, buttonWidth, buttonHeight);
 		_leaveButton.Click += OnLeaveClicked;
 
 			// Player list panel (inside the main panel)
@@ -190,7 +286,6 @@ namespace GungeonTogether.UI
 			_statusLabel.ModifyLocalizedText("GUNGEON TOGETHER\n" + lobbyText + "\n" + roleText + " | " + connText);
 
 			// Button enable states
-			if (_hostButton != null) _hostButton.IsEnabled = !NetworkManager.Instance.IsConnected;
 			if (_inviteButton != null) _inviteButton.IsEnabled = lobby.IsInLobby;
 			if (_leaveButton != null) _leaveButton.IsEnabled = lobby.IsInLobby || NetworkManager.Instance.IsConnected;
 		}
@@ -200,10 +295,44 @@ namespace GungeonTogether.UI
 			if (_panel != null) _panel.IsVisible = visible;
 		}
 
-		private static void OnHostClicked(dfControl control, dfMouseEventArgs mouseEvent)
+		private static void OnMainMenuHostClicked(dfControl control, dfMouseEventArgs mouseEvent)
 		{
-			Debug.Log("[UI] Host Lobby clicked.");
+			if (_mainMenuController == null || NetworkManager.Instance.IsConnected || SteamLobbyManager.Instance.IsInLobby)
+				return;
+
+			Debug.Log("[UI] Main-menu Host Lobby clicked.");
+			_launchingHostedGame = true;
 			SteamLobbyManager.Instance.CreateLobby(NetworkManager.MaxPlayers);
+			_mainMenuController.NewGameButton.DoClick();
+		}
+
+		private static void OnSinglePlayerClicked(dfControl control, dfMouseEventArgs mouseEvent)
+		{
+			if (_launchingHostedGame)
+			{
+				_launchingHostedGame = false;
+				return;
+			}
+
+			// PLAY always means a clean single-player session.
+			if (SteamLobbyManager.Instance.IsInLobby)
+				SteamLobbyManager.Instance.LeaveLobby();
+			if (NetworkManager.Instance.IsConnected)
+				NetworkManager.Instance.Shutdown();
+		}
+
+		private static void EnterJoinedGameFromMainMenu()
+		{
+			if (_mainMenuController == null || _launchingHostedGame) return;
+			Debug.Log("[UI] Entering the foyer after accepting a lobby invite.");
+			_launchingHostedGame = true;
+			_mainMenuController.NewGameButton.DoClick();
+		}
+
+		private static void OnMainMenuHostFocused(dfControl control, dfFocusEventArgs args)
+		{
+			if (Foyer.DoMainMenu && GameManager.Instance != null)
+				AkSoundEngine.PostEvent("Play_UI_menu_select_01", GameManager.Instance.gameObject);
 		}
 
 		private static void OnInviteClicked(dfControl control, dfMouseEventArgs mouseEvent)

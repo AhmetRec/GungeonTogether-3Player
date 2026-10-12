@@ -4,7 +4,7 @@
     <TargetFramework>net35</TargetFramework>
     <AssemblyName>GungeonTogether</AssemblyName>
     <Description>Gungeon Together Mod</Description>
-    <Version>0.5.2</Version>
+    <Version>0.5.3</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
