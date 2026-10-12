@@ -12,6 +12,7 @@ namespace GungeonTogether.Networking.Packets
         public int PickupId;
         public string PickupKey;
         public Vector2 Position;
+        public int WorldObjectId;
 
         public void Serialize(BinaryWriter writer)
         {
@@ -20,6 +21,7 @@ namespace GungeonTogether.Networking.Packets
             writer.Write(PickupKey ?? "");
             writer.Write(Position.x);
             writer.Write(Position.y);
+            writer.Write(WorldObjectId);
         }
 
         public void Deserialize(BinaryReader reader)
@@ -28,6 +30,7 @@ namespace GungeonTogether.Networking.Packets
             PickupId = reader.ReadInt32();
             PickupKey = reader.ReadString();
             Position = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+            WorldObjectId = reader.ReadInt32();
         }
     }
 }

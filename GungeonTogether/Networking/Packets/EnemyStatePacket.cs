@@ -14,6 +14,9 @@ namespace GungeonTogether.Networking.Packets
         public float Rotation;
         public float Health;
         public int AIState;
+        public Vector2 Velocity;
+        public int SpriteId;
+        public bool FlipX;
 
         public void Serialize(BinaryWriter writer)
         {
@@ -23,6 +26,10 @@ namespace GungeonTogether.Networking.Packets
             writer.Write(Rotation);
             writer.Write(Health);
             writer.Write(AIState);
+            writer.Write(Velocity.x);
+            writer.Write(Velocity.y);
+            writer.Write(SpriteId);
+            writer.Write(FlipX);
         }
 
         public void Deserialize(BinaryReader reader)
@@ -32,6 +39,9 @@ namespace GungeonTogether.Networking.Packets
             Rotation = reader.ReadSingle();
             Health = reader.ReadSingle();
             AIState = reader.ReadInt32();
+            Velocity = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+            SpriteId = reader.ReadInt32();
+            FlipX = reader.ReadBoolean();
         }
     }
 }

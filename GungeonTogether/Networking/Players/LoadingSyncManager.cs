@@ -33,17 +33,7 @@ namespace GungeonTogether.Networking.Sync
             var gm = ETGReflectionHelper.GetGameManager();
             if (gm == null) return;
 
-            // ETG might have a property "IsLoading" or "Loading"
-            var loadingProp = gm.GetType().GetProperty("IsLoading", BindingFlags.Public | BindingFlags.Instance);
-            if (loadingProp != null)
-            {
-                _isLoading = (bool)loadingProp.GetValue(gm, null);
-            }
-            else
-            {
-                // Fallback: check if scene is changing
-                _isLoading = !UnityEngine.SceneManagement.SceneManager.GetActiveScene().isLoaded;
-            }
+            _isLoading = ETGReflectionHelper.IsLevelLoading();
 
             if (_isLoading != _wasLoading)
             {
@@ -60,6 +50,7 @@ namespace GungeonTogether.Networking.Sync
             // If client is loading, we could show a message; but for now, we just wait.
             // We'll also delay position sync until loading finishes.
             _isClientLoading = isLoading;
+            WorldSyncManager.Instance.SetClientLoading(isLoading);
         }
 
         private bool _isClientLoading = false;

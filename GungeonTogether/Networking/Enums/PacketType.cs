@@ -25,5 +25,12 @@ namespace GungeonTogether.Networking.Enums
         EnemyProjectileState = 20,
         EnemyProjectileDestroy = 21,
         PlayerBeamState = 22,
+        InteractableUsed = 23,
+        BreakableState = 24,
+        RoomState = 25,
+        PlayerItemUsed = 26,
+        PlayerBlankUsed = 27,
+        LatencyPing = 28,
+        GroundPickupSpawn = 29,
     }
 }

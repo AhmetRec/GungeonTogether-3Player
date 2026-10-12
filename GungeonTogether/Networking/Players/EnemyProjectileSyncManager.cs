@@ -113,6 +113,8 @@ namespace GungeonTogether.Networking.Sync
         {
             if (actor == null) return;
             actor.CanTargetPlayers = false;
+            if (actor.healthHaver != null)
+                actor.healthHaver.IsVulnerable = false;
             if (actor.behaviorSpeculator != null)
                 actor.behaviorSpeculator.enabled = false;
             if (!_clientEnemies.Add(actor))

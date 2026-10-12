@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using GungeonTogether.Networking.Steam;
 using GungeonTogether.Networking.Packets;
+using System.Reflection;
 
 namespace GungeonTogether.Networking
 {
@@ -28,6 +29,13 @@ namespace GungeonTogether.Networking
         private float _lastLocalSampleTime;
         private bool _hasLocalSample;
         private uint _localSequence;
+        private static readonly FieldInfo AllPlayersField = typeof(GameManager).GetField("m_players", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        private void LateUpdate()
+        {
+            if (_remotePlayers.Count > 0 && (NetworkManager.Instance.IsHost || NetworkManager.Instance.IsClient))
+                RefreshGamePlayerArray();
+        }
 
         public PlayerPositionPacket CreateLocalPositionPacket(ulong playerId)
         {
@@ -48,6 +56,8 @@ namespace GungeonTogether.Networking
             _lastLocalPosition = position;
             _lastLocalSampleTime = now;
             _hasLocalSample = true;
+            float aimAngle = player.CurrentGun != null ? player.CurrentGun.CurrentAngle : player.transform.eulerAngles.z;
+            float aimRadians = aimAngle * Mathf.Deg2Rad;
 
             var packet = new PlayerPositionPacket
             {
@@ -63,7 +73,10 @@ namespace GungeonTogether.Networking
                 SpriteId = player.sprite != null ? player.sprite.spriteId : -1,
                 SpriteCollectionName = player.sprite != null && player.sprite.Collection != null ? player.sprite.Collection.name : "",
                 FlipX = player.sprite != null && player.sprite.FlipX,
-                CharacterPrefabKey = player.gameObject != null ? player.gameObject.name.Replace("(Clone)", "").Trim() : ""
+                CharacterPrefabKey = player.gameObject != null ? player.gameObject.name.Replace("(Clone)", "").Trim() : "",
+                GunId = player.CurrentGun != null ? player.CurrentGun.PickupObjectId : -1,
+                GunKey = ModCompatibility.GetPickupKey(player.CurrentGun),
+                AimDirection = new Vector2(Mathf.Cos(aimRadians), Mathf.Sin(aimRadians))
             };
 
             return packet;
@@ -81,21 +94,26 @@ namespace GungeonTogether.Networking
             int slot = GetOrAllocateSlot(steamId);
             RemotePlayerAvatar player = RemotePlayerAvatar.Create(steamId, slot, position, rotation);
             _remotePlayers[steamId] = player;
+            RefreshGamePlayerArray();
             Debug.Log($"[PlayerManager] Spawned real remote player {steamId} in slot {slot} at {position}");
         }
 
-        public void UpdateRemotePlayer(ulong steamId, Vector2 position, Vector2 velocity, float rotation, bool flipX, uint sequence, int spriteId, string spriteCollectionName, bool isDodgeRolling, string characterPrefabKey)
+        public void UpdateRemotePlayer(ulong steamId, PlayerPositionPacket packet)
         {
             RemotePlayerAvatar player;
             if (!_remotePlayers.TryGetValue(steamId, out player) || player == null)
             {
                 _remotePlayers.Remove(steamId);
-                SpawnRemotePlayer(steamId, position, rotation);
+                SpawnRemotePlayer(steamId, packet.Position, packet.Rotation);
                 _remotePlayers.TryGetValue(steamId, out player);
             }
-
             if (player != null)
-                player.Apply(position, velocity, rotation, flipX, sequence, spriteId, spriteCollectionName, isDodgeRolling, characterPrefabKey);
+            {
+                player.Apply(packet.Position, packet.Velocity, packet.Rotation, packet.FlipX, packet.Sequence,
+                    packet.SpriteId, packet.SpriteCollectionName, packet.IsDodgeRolling, packet.CharacterPrefabKey,
+                    packet.GunId, packet.GunKey);
+                player.SetAimDirection(packet.AimDirection);
+            }
         }
 
         public PlayerController GetRemotePlayerController(ulong steamId)
@@ -117,8 +135,13 @@ namespace GungeonTogether.Networking
             RemotePlayerAvatar player;
             if (_remotePlayers.TryGetValue(steamId, out player))
             {
-                if (player != null) player.Detach();
-                Destroy(player.gameObject);
+                // Unity reports destroyed objects as null; touching
+                // player.gameObject then threw and left the slot allocated.
+                if (player != null)
+                {
+                    player.Detach();
+                    Destroy(player.gameObject);
+                }
                 _remotePlayers.Remove(steamId);
                 _remoteSlots.Remove(steamId);
                 Debug.Log($"[PlayerManager] Removed remote player {steamId}");
@@ -129,7 +152,7 @@ namespace GungeonTogether.Networking
         public void SetRemotePlayerDowned(ulong steamId, bool downed, float health = 0.5f, float armor = 0f)
         {
             RemotePlayerAvatar player;
-            if (_remotePlayers.TryGetValue(steamId, out player))
+            if (_remotePlayers.TryGetValue(steamId, out player) && player != null)
                 player.SetDowned(downed, health, armor);
         }
 
@@ -176,7 +199,34 @@ namespace GungeonTogether.Networking
             }
 
             GameManager gm = GameManager.Instance;
-            if (gm != null) gm.RefreshAllPlayers();
+            if (gm != null) RefreshGamePlayerArray();
+        }
+
+        public List<PlayerController> GetRemotePlayerControllers()
+        {
+            var players = new List<PlayerController>();
+            foreach (var pair in _remotePlayers)
+                if (pair.Value != null && pair.Value.PlayerController != null) players.Add(pair.Value.PlayerController);
+            return players;
+        }
+
+        public void RefreshGamePlayerArray()
+        {
+            GameManager gm = GameManager.Instance;
+            if (gm == null || AllPlayersField == null) return;
+            var players = new List<PlayerController>();
+            if (gm.PrimaryPlayer != null) players.Add(gm.PrimaryPlayer);
+            foreach (PlayerController remote in GetRemotePlayerControllers())
+                if (!players.Contains(remote)) players.Add(remote);
+            PlayerController[] existing = gm.AllPlayers;
+            if (existing != null && existing.Length == players.Count)
+            {
+                bool same = true;
+                for (int i = 0; i < existing.Length; i++)
+                    if (existing[i] != players[i]) { same = false; break; }
+                if (same) return;
+            }
+            AllPlayersField.SetValue(gm, players.ToArray());
         }
 
         private static void RestoreSinglePlayerMode()

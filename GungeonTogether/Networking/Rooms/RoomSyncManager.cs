@@ -14,8 +14,17 @@ public class RoomSyncManager : MonoBehaviour
     private string _currentRoomName = "";
     private float _lastSyncTime = 0f;
     private float _lastSpawnRefreshTime = 0f;
+    private bool _lastRoomSealed;
+    private bool _hasRoomState;
+    private string _lastLocalRoomName = "";
+    private float _suppressLocalRoomEventsUntil;
     private const float SYNC_INTERVAL = 0.2f;
     private const float SPAWN_REFRESH_INTERVAL = 2f;
+
+    private void LateUpdate()
+    {
+        UpdateSharedCameraBounds();
+    }
 
     private void Awake() { DontDestroyOnLoad(gameObject); }
 
@@ -27,6 +36,8 @@ public class RoomSyncManager : MonoBehaviour
     private void Update()
     {
         if (!NetworkManager.Instance.IsHost && !NetworkManager.Instance.IsClient) return;
+
+        TrackLocalRoomTransition();
 
         // Host: sync room state
         if (NetworkManager.Instance.IsHost)
@@ -51,14 +62,15 @@ public class RoomSyncManager : MonoBehaviour
         if (roomName != _currentRoomName)
         {
             _currentRoomName = roomName;
-            _enemyIdMap.Clear();
-            EnemyProjectileSyncManager.Instance.Clear();
-            NetworkEntityManager.Instance.Clear();
-            // Broadcast RoomChangePacket
-            NetworkManager.Instance.Host.Broadcast(new RoomChangePacket { RoomName = roomName });
 
             // Spawn enemies in this room and broadcast
             SpawnAndBroadcastEnemies(roomHandler);
+            BroadcastRoomState(roomHandler, true);
+        }
+
+        else if (!_hasRoomState || roomHandler.IsSealed != _lastRoomSealed)
+        {
+            BroadcastRoomState(roomHandler, true);
         }
 
         // Sync enemy states periodically
@@ -92,7 +104,8 @@ public class RoomSyncManager : MonoBehaviour
                 PrefabName = prefabName,
                 Position = new Vector2(pos.x, pos.y),
                 Rotation = rot,
-                Health = health
+                Health = health,
+                RoomIdentifier = GetRoomIdentifier(actor != null ? actor.ParentRoom : room)
             };
             NetworkManager.Instance.Host.Broadcast(packet, reliable: true);
         }
@@ -102,7 +115,7 @@ public class RoomSyncManager : MonoBehaviour
     {
         bool refreshSpawns = Time.time - _lastSpawnRefreshTime > SPAWN_REFRESH_INTERVAL;
         if (refreshSpawns) _lastSpawnRefreshTime = Time.time;
-        var enemies = ETGReflectionHelper.GetActiveEnemies();
+        var enemies = GetAllActiveEnemies();
         foreach (var enemy in enemies)
         {
             var enemyComponent = enemy as Component;
@@ -125,7 +138,8 @@ public class RoomSyncManager : MonoBehaviour
                     PrefabName = actor != null ? actor.EnemyGuid : enemyComponent.name,
                     Position = new Vector2(pos.x, pos.y),
                     Rotation = rot,
-                    Health = health
+                    Health = health,
+                    RoomIdentifier = GetRoomIdentifier(actor != null ? actor.ParentRoom : null)
                 }, reliable: true);
             }
 
@@ -135,7 +149,13 @@ public class RoomSyncManager : MonoBehaviour
                 Position = new Vector2(pos.x, pos.y),
                 Rotation = rot,
                 Health = health,
-                AIState = aiState
+                AIState = aiState,
+                Velocity = enemyComponent is AIActor && ((AIActor)enemyComponent).specRigidbody != null
+                    ? ((AIActor)enemyComponent).specRigidbody.Velocity : Vector2.zero,
+                SpriteId = enemyComponent is AIActor && ((AIActor)enemyComponent).sprite != null
+                    ? ((AIActor)enemyComponent).sprite.spriteId : -1,
+                FlipX = enemyComponent is AIActor && ((AIActor)enemyComponent).sprite != null &&
+                    ((AIActor)enemyComponent).sprite.FlipX
             };
             NetworkManager.Instance.Host.Broadcast(packet, reliable: false);
         }
@@ -156,7 +176,7 @@ public class RoomSyncManager : MonoBehaviour
     public void SendSnapshotTo(ulong targetId)
     {
         if (!NetworkManager.Instance.IsHost || NetworkManager.Instance.Host == null) return;
-        foreach (var enemy in ETGReflectionHelper.GetActiveEnemies())
+        foreach (var enemy in GetAllActiveEnemies())
         {
             Component component = enemy as Component;
             AIActor actor = component as AIActor;
@@ -169,9 +189,186 @@ public class RoomSyncManager : MonoBehaviour
                 PrefabName = actor.EnemyGuid,
                 Position = component.transform.position,
                 Rotation = component.transform.eulerAngles.z,
-                Health = ETGReflectionHelper.GetEnemyHealth(component)
+                Health = ETGReflectionHelper.GetEnemyHealth(component),
+                RoomIdentifier = GetRoomIdentifier(actor.ParentRoom)
             }, reliable: true);
         }
+        RoomHandler room = ETGReflectionHelper.GetCurrentRoomHandler() as RoomHandler;
+        if (room != null)
+        {
+            NetworkManager.Instance.Host.SendPacket(targetId, CreateRoomState(room), reliable: true);
+        }
+    }
+
+    private void BroadcastRoomState(RoomHandler room, bool reliable)
+    {
+        _lastRoomSealed = room.IsSealed;
+        _hasRoomState = true;
+        NetworkManager.Instance.Host.Broadcast(CreateRoomState(room), reliable: reliable);
+    }
+
+    private static RoomStatePacket CreateRoomState(RoomHandler room)
+    {
+        return new RoomStatePacket
+        {
+            RoomIdentifier = room.GetRoomName() + "@" + room.area.basePosition.x + "," + room.area.basePosition.y,
+            IsSealed = room.IsSealed
+        };
+    }
+
+    private void TrackLocalRoomTransition()
+    {
+        PlayerController local = GameManager.Instance != null ? GameManager.Instance.PrimaryPlayer : null;
+        RoomHandler room = local != null ? local.CurrentRoom : null;
+        if (room == null) return;
+        string identifier = GetRoomIdentifier(room);
+        if (identifier == _lastLocalRoomName) return;
+
+        bool initial = string.IsNullOrEmpty(_lastLocalRoomName);
+        _lastLocalRoomName = identifier;
+        if (initial || Time.realtimeSinceStartup < _suppressLocalRoomEventsUntil || ETGReflectionHelper.IsLevelLoading()) return;
+
+        var packet = new RoomChangePacket
+        {
+            RoomName = identifier,
+            PlayerId = SteamReflectionHelper.GetLocalSteamId(),
+            AnchorPosition = local.CenterPosition,
+            IsRequest = NetworkManager.Instance.IsClient
+        };
+
+        if (NetworkManager.Instance.IsHost)
+            BeginPartyTransition(packet);
+        else if (NetworkManager.Instance.Client != null && NetworkManager.Instance.Client.IsConnected)
+            NetworkManager.Instance.Client.SendPacket(0, packet, reliable: true);
+    }
+
+    public void HandleClientRoomRequest(ulong playerId, RoomChangePacket packet)
+    {
+        if (!NetworkManager.Instance.IsHost || packet == null) return;
+        packet.PlayerId = playerId;
+        packet.IsRequest = false;
+        BeginPartyTransition(packet);
+    }
+
+    private void BeginPartyTransition(RoomChangePacket packet)
+    {
+        if (packet == null || FindRoom(packet.RoomName) == null) return;
+        packet.IsRequest = false;
+        ApplyPartyTransition(packet);
+        NetworkManager.Instance.Host.Broadcast(packet, reliable: true);
+    }
+
+    public void ApplyPartyTransition(RoomChangePacket packet)
+    {
+        if (packet == null) return;
+        RoomHandler targetRoom = FindRoom(packet.RoomName);
+        if (targetRoom == null)
+        {
+            Debug.LogWarning("[RoomSync] Could not find party destination " + packet.RoomName);
+            return;
+        }
+
+        _suppressLocalRoomEventsUntil = Time.realtimeSinceStartup + 1f;
+        _lastLocalRoomName = packet.RoomName;
+        targetRoom.SetRoomActive(true);
+
+        GameManager gm = GameManager.Instance;
+        if (gm == null) return;
+        PlayerManager.Instance.RefreshGamePlayerArray();
+        if (gm.AllPlayers == null) return;
+        int index = 0;
+        foreach (PlayerController player in gm.AllPlayers)
+        {
+            if (player == null) continue;
+            Vector2 offset = index == 0 ? Vector2.zero : new Vector2((index % 2 == 0 ? -1f : 1f) * 0.45f, 0f);
+            player.WarpToPoint(packet.AnchorPosition + offset, false, false);
+            index++;
+        }
+
+        if (gm.MainCameraController != null) gm.MainCameraController.ClearPlayerCache();
+        Debug.Log("[RoomSync] Moved the party together into " + packet.RoomName);
+    }
+
+    private void UpdateSharedCameraBounds()
+    {
+        GameManager gm = GameManager.Instance;
+        if (gm == null || gm.MainCameraController == null) return;
+        CameraController camera = gm.MainCameraController;
+        bool active = (NetworkManager.Instance.IsHost || NetworkManager.Instance.IsClient) &&
+                      !ETGReflectionHelper.IsLevelLoading() && gm.PrimaryPlayer != null;
+        List<PlayerController> remotes = PlayerManager.Instance.GetRemotePlayerControllers();
+        if (!active || remotes.Count == 0)
+        {
+            camera.UseOverridePlayerOnePosition = false;
+            camera.UseOverridePlayerTwoPosition = false;
+            return;
+        }
+
+        RoomHandler room = gm.PrimaryPlayer.CurrentRoom;
+        Vector2 min = gm.PrimaryPlayer.CenterPosition;
+        Vector2 max = min;
+        int included = 1;
+        foreach (PlayerController remote in remotes)
+        {
+            if (remote == null || room == null || remote.CurrentRoom != room) continue;
+            Vector2 position = remote.CenterPosition;
+            min = Vector2.Min(min, position);
+            max = Vector2.Max(max, position);
+            included++;
+        }
+
+        if (included < 2)
+        {
+            camera.UseOverridePlayerOnePosition = false;
+            camera.UseOverridePlayerTwoPosition = false;
+            return;
+        }
+
+        // The built-in camera only understands two players. Feeding it the
+        // opposite corners of the whole party's bounds preserves its native
+        // room clamping and zoom while framing all three participants.
+        camera.OverridePlayerOnePosition = min;
+        camera.OverridePlayerTwoPosition = max;
+        camera.UseOverridePlayerOnePosition = true;
+        camera.UseOverridePlayerTwoPosition = true;
+    }
+
+    public static RoomHandler FindRoom(string identifier)
+    {
+        GameManager gm = GameManager.Instance;
+        if (gm == null || gm.Dungeon == null || gm.Dungeon.data == null || gm.Dungeon.data.rooms == null) return null;
+        foreach (RoomHandler room in gm.Dungeon.data.rooms)
+            if (room != null && string.Equals(GetRoomIdentifier(room), identifier, System.StringComparison.Ordinal)) return room;
+        return null;
+    }
+
+    public static string GetRoomIdentifier(RoomHandler room)
+    {
+        return room == null || room.area == null ? "" : room.GetRoomName() + "@" + room.area.basePosition.x + "," + room.area.basePosition.y;
+    }
+
+    private static List<object> GetAllActiveEnemies()
+    {
+        var result = new List<object>();
+        if (StaticReferenceManager.AllEnemies == null) return result;
+        foreach (AIActor actor in StaticReferenceManager.AllEnemies)
+            if (actor != null && actor.gameObject.activeInHierarchy && actor.healthHaver != null && !actor.healthHaver.IsDead)
+                result.Add(actor);
+        return result;
+    }
+
+    public void ApplyRoomState(RoomStatePacket packet)
+    {
+        RoomHandler room = ETGReflectionHelper.GetCurrentRoomHandler() as RoomHandler;
+        if (room == null || packet == null) return;
+        string current = room.GetRoomName() + "@" + room.area.basePosition.x + "," + room.area.basePosition.y;
+        if (!string.Equals(current, packet.RoomIdentifier, System.StringComparison.Ordinal)) return;
+
+        room.SetRoomActive(true);
+        if (GameManager.Instance.PrimaryPlayer != null)
+            room.OnBecameVisible(GameManager.Instance.PrimaryPlayer);
+        if (packet.IsSealed && !room.IsSealed) room.SealRoom();
+        else if (!packet.IsSealed && room.IsSealed) room.UnsealRoom();
     }
 
     private Dictionary<Component, int> _enemyIdMap = new Dictionary<Component, int>();
@@ -182,6 +379,17 @@ public class RoomSyncManager : MonoBehaviour
         id = NetworkEntityManager.Instance.AssignId(enemy);
         _enemyIdMap[enemy] = id;
         return id;
+    }
+
+    public void ResetSession()
+    {
+        _currentRoomName = "";
+        _lastSyncTime = 0f;
+        _lastSpawnRefreshTime = 0f;
+        _hasRoomState = false;
+        _lastLocalRoomName = "";
+        _suppressLocalRoomEventsUntil = 0f;
+        _enemyIdMap.Clear();
     }
 
     // Client side: handle packets via NetworkManager

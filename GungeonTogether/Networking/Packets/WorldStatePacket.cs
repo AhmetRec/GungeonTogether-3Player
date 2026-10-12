@@ -16,6 +16,7 @@ namespace GungeonTogether.Networking.Packets
         public string RoomIdentifier;   // room name or unique ID
         public Vector2 Position;
         public float Rotation;
+        public int LayoutHash;          // fingerprint of the generated room layout (0 = unknown)
 
         public void Serialize(BinaryWriter writer)
         {
@@ -27,6 +28,7 @@ namespace GungeonTogether.Networking.Packets
             writer.Write(Position.x);
             writer.Write(Position.y);
             writer.Write(Rotation);
+            writer.Write(LayoutHash);
         }
 
         public void Deserialize(BinaryReader reader)
@@ -38,6 +40,7 @@ namespace GungeonTogether.Networking.Packets
             RoomIdentifier = reader.ReadString();
             Position = new Vector2(reader.ReadSingle(), reader.ReadSingle());
             Rotation = reader.ReadSingle();
+            LayoutHash = reader.ReadInt32();
         }
     }
 }

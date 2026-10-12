@@ -38,7 +38,8 @@ namespace GungeonTogether.Networking
         public void Update()
         {
             if (!_runLocked && ETGReflectionHelper.GetGameManager() != null && !Foyer.DoMainMenu &&
-                !ETGReflectionHelper.IsInFoyer() && ETGReflectionHelper.GetCurrentFloorIndex() > 0)
+                !ETGReflectionHelper.IsInFoyer() && !ETGReflectionHelper.IsLevelLoading() &&
+                !string.IsNullOrEmpty(ETGReflectionHelper.GetCurrentLevelName()))
             {
                 _runLocked = true;
                 foreach (ulong client in _preRunMembers)
@@ -192,6 +193,9 @@ namespace GungeonTogether.Networking
             SendCurrentWorldState(transportId);
             RoomSyncManager.Instance.SendSnapshotTo(transportId);
             EnemyProjectileSyncManager.Instance.SendSnapshotTo(transportId);
+            WorldEventSyncManager.Instance.SendSnapshotTo(transportId);
+            GameplaySyncManager.Instance.SendPickupSnapshotTo(transportId);
+            GameplaySyncManager.Instance.SendGroundPickupSnapshotTo(transportId);
         }
 
         private void SendConnectionAccepted(ulong transportId)
@@ -232,27 +236,9 @@ namespace GungeonTogether.Networking
 
         private void SendCurrentWorldState(ulong targetId)
         {
-            var gm = ETGReflectionHelper.GetGameManager();
-            if (gm == null) return;
-
-            bool isFoyer = ETGReflectionHelper.IsInFoyer();
-            int floorIndex = ETGReflectionHelper.GetCurrentFloorIndex();
-            string roomId = ETGReflectionHelper.GetCurrentRoomIdentifier();
-            Vector3 pos = ETGReflectionHelper.GetPlayerPosition();
-            float rot = ETGReflectionHelper.GetPlayerRotation();
-
-            var packet = new WorldStatePacket
-            {
-                IsFoyer = isFoyer,
-                FloorIndex = floorIndex,
-                RunSeed = ETGReflectionHelper.GetCurrentRunSeed(),
-                LevelName = ETGReflectionHelper.GetCurrentLevelName(),
-                RoomIdentifier = roomId,
-                Position = new Vector2(pos.x, pos.y),
-                Rotation = rot
-            };
-            SendPacket(targetId, packet, reliable: true);
-            Debug.Log($"[Host] Sent initial world state to {targetId}: isFoyer={isFoyer}, floor={floorIndex}");
+            // Built by WorldSyncManager so that a player joining during a floor
+            // transition never receives the previous floor's coordinates.
+            WorldSyncManager.Instance.SendWorldStateTo(targetId);
         }
 
         public void HandlePlayerPosition(ulong senderId, PlayerPositionPacket packet)
@@ -277,7 +263,7 @@ namespace GungeonTogether.Networking
             bool isFirstPosition = !_lastPlayerPositions.ContainsKey(senderId);
             _lastPlayerPositions[senderId] = packet;
 
-            PlayerManager.Instance.UpdateRemotePlayer(playerId, packet.Position, packet.Velocity, packet.Rotation, packet.FlipX, packet.Sequence, packet.SpriteId, packet.SpriteCollectionName, packet.IsDodgeRolling, packet.CharacterPrefabKey);
+            PlayerManager.Instance.UpdateRemotePlayer(playerId, packet);
 
             if (isFirstPosition)
             {
@@ -336,11 +322,63 @@ namespace GungeonTogether.Networking
             ulong playerId;
             if (!TryGetAuthenticatedPlayer(senderId, out playerId)) return;
             packet.PlayerId = playerId;
-            GameplaySyncManager.Instance.ApplyRemotePickup(packet);
-            Broadcast(packet, senderId, reliable: true);
+            if (!GameplaySyncManager.Instance.ApplyRemotePickup(packet)) return;
+            GameplaySyncManager.Instance.SynchronizeSharedEconomyFrom(playerId);
+            GameplaySyncManager.Instance.RecordAuthoritativePickup(packet);
+            Broadcast(packet, reliable: true);
         }
 
         public void HandleLocalPickup(ItemPickupPacket packet)
+        {
+            packet.PlayerId = SteamReflectionHelper.GetLocalSteamId();
+            GameplaySyncManager.Instance.RecordAuthoritativePickup(packet);
+            GameplaySyncManager.Instance.SynchronizeSharedEconomyFrom(packet.PlayerId);
+            Broadcast(packet, reliable: true);
+        }
+
+        public void HandleInteraction(ulong senderId, InteractableUsedPacket packet)
+        {
+            ulong playerId;
+            if (!TryGetAuthenticatedPlayer(senderId, out playerId)) return;
+            packet.PlayerId = playerId;
+            WorldEventSyncManager.Instance.HandleHostInteraction(packet);
+            GameplaySyncManager.Instance.SynchronizeSharedEconomyFrom(playerId);
+            Broadcast(packet, reliable: true);
+        }
+
+        public void HandleBreak(ulong senderId, BreakableStatePacket packet)
+        {
+            ulong playerId;
+            if (!TryGetAuthenticatedPlayer(senderId, out playerId)) return;
+            WorldEventSyncManager.Instance.HandleHostBreak(packet);
+            Broadcast(packet, reliable: true);
+        }
+
+        public void HandleItemUsed(ulong senderId, PlayerItemUsedPacket packet)
+        {
+            ulong playerId;
+            if (!TryGetAuthenticatedPlayer(senderId, out playerId)) return;
+            packet.PlayerId = playerId;
+            GameplaySyncManager.Instance.ApplyRemoteItemUsed(packet);
+            Broadcast(packet, senderId, reliable: true);
+        }
+
+        public void HandleLocalItemUsed(PlayerItemUsedPacket packet)
+        {
+            packet.PlayerId = SteamReflectionHelper.GetLocalSteamId();
+            Broadcast(packet, reliable: true);
+        }
+
+        public void HandleBlankUsed(ulong senderId, PlayerBlankUsedPacket packet)
+        {
+            ulong playerId;
+            if (!TryGetAuthenticatedPlayer(senderId, out playerId)) return;
+            packet.PlayerId = playerId;
+            GameplaySyncManager.Instance.ApplyRemoteBlankUsed(packet);
+            Broadcast(packet, senderId, reliable: true);
+        }
+
+        public void HandleLocalBlankUsed(PlayerBlankUsedPacket packet)
         {
             packet.PlayerId = SteamReflectionHelper.GetLocalSteamId();
             Broadcast(packet, reliable: true);
@@ -351,6 +389,8 @@ namespace GungeonTogether.Networking
             ulong playerId;
             if (!TryGetAuthenticatedPlayer(senderId, out playerId)) return;
             packet.PlayerId = playerId;
+            int measuredPing = NetworkManager.Instance.GetPingMs(playerId);
+            if (measuredPing >= 0) packet.PingMs = measuredPing;
             GameplaySyncManager.Instance.RecordVitals(packet);
             Broadcast(packet, senderId, reliable: false);
         }
@@ -376,6 +416,18 @@ namespace GungeonTogether.Networking
                     result[playerId] = pair.Value.Position;
             }
             return result;
+        }
+
+        public List<ulong> GetConnectedClientIds()
+        {
+            return new List<ulong>(_connectedClients);
+        }
+
+        public void HandleRoomChange(ulong senderId, RoomChangePacket packet)
+        {
+            ulong playerId;
+            if (!TryGetAuthenticatedPlayer(senderId, out playerId)) return;
+            RoomSyncManager.Instance.HandleClientRoomRequest(playerId, packet);
         }
 
         public void SendPacket(ulong targetId, INetworkPacket packet, bool reliable = true)

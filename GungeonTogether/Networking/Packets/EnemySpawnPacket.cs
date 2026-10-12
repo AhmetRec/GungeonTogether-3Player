@@ -14,6 +14,7 @@ namespace GungeonTogether.Networking.Packets
         public Vector2 Position;
         public float Rotation;
         public float Health;
+        public string RoomIdentifier;
 
         public void Serialize(BinaryWriter writer)
         {
@@ -23,6 +24,7 @@ namespace GungeonTogether.Networking.Packets
             writer.Write(Position.y);
             writer.Write(Rotation);
             writer.Write(Health);
+            writer.Write(RoomIdentifier ?? string.Empty);
         }
 
         public void Deserialize(BinaryReader reader)
@@ -32,6 +34,7 @@ namespace GungeonTogether.Networking.Packets
             Position = new Vector2(reader.ReadSingle(), reader.ReadSingle());
             Rotation = reader.ReadSingle();
             Health = reader.ReadSingle();
+            RoomIdentifier = reader.ReadString();
         }
     }
 }

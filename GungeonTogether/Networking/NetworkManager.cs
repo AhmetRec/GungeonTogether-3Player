@@ -30,10 +30,20 @@ namespace GungeonTogether.Networking
 
         private SteamP2PManager _p2p;
         private SteamLobbyManager _lobby;
+        private readonly List<DeferredPacket> _deferredWorldPackets = new List<DeferredPacket>();
+        private readonly Dictionary<ulong, float> _roundTripMs = new Dictionary<ulong, float>();
+        private float _nextPingTime;
+        private uint _pingSequence;
 
-        // Protocol v7 replaces visual-only avatars with real network-controlled
-        // PlayerControllers and adds the character prefab identity to movement.
-        public const int ProtocolVersion = 7;
+        private sealed class DeferredPacket
+        {
+            public ulong SenderId;
+            public INetworkPacket Packet;
+        }
+
+        // Protocol v13 adds party room transitions, room-aware enemies,
+        // authoritative ground pickups, measured latency and aim direction.
+        public const int ProtocolVersion = 13;
         public const int MaxPlayers = 3;
         public const int MaxClients = MaxPlayers - 1;
 
@@ -69,12 +79,24 @@ namespace GungeonTogether.Networking
             _lobby?.Update();
             _p2p?.Update();
             CurrentRole?.Update();
+            UpdateLatencyPings();
+
+            if (IsClient && WorldSyncManager.Instance.IsClientWorldReady && _deferredWorldPackets.Count > 0)
+            {
+                DeferredPacket[] pending = _deferredWorldPackets.ToArray();
+                _deferredWorldPackets.Clear();
+                foreach (DeferredPacket item in pending)
+                    ProcessPacket(item.SenderId, item.Packet);
+            }
         }
 
         public void StartHosting()
         {
             if (CurrentRole != null) Shutdown();
             WorldSyncManager.Instance.ResetSession();
+            RoomSyncManager.Instance.ResetSession();
+            _deferredWorldPackets.Clear();
+            _roundTripMs.Clear();
 
             IsHost = true;
             IsClient = false;
@@ -91,6 +113,9 @@ namespace GungeonTogether.Networking
         {
             if (CurrentRole != null) Shutdown();
             WorldSyncManager.Instance.ResetSession();
+            RoomSyncManager.Instance.ResetSession();
+            _deferredWorldPackets.Clear();
+            _roundTripMs.Clear();
 
             IsHost = false;
             IsClient = true;
@@ -108,8 +133,12 @@ namespace GungeonTogether.Networking
             CurrentRole?.Shutdown();
             EnemyProjectileSyncManager.Instance.Clear();
             GameplaySyncManager.Instance.ClearNetworkState();
+            WorldEventSyncManager.Instance.ResetSession();
             PlayerManager.Instance.ClearAll();
             WorldSyncManager.Instance.ResetSession();
+            RoomSyncManager.Instance.ResetSession();
+            _deferredWorldPackets.Clear();
+            _roundTripMs.Clear();
             CurrentRole = null;
             Host = null;
             Client = null;
@@ -127,11 +156,44 @@ namespace GungeonTogether.Networking
                     Debug.LogWarning($"[NetworkManager] Failed to deserialize packet from {senderId}");
                     return;
                 }
+                if (IsClient && ShouldDeferUntilWorldReady(packet.Type) && !WorldSyncManager.Instance.IsClientWorldReady)
+                {
+                    if (_deferredWorldPackets.Count >= 2048)
+                        _deferredWorldPackets.RemoveAt(0);
+                    _deferredWorldPackets.Add(new DeferredPacket { SenderId = senderId, Packet = packet });
+                    return;
+                }
                 ProcessPacket(senderId, packet);
             }
             catch (Exception e)
             {
                 Debug.LogError($"Error handling packet from {senderId}: {e}");
+            }
+        }
+
+        private static bool ShouldDeferUntilWorldReady(PacketType type)
+        {
+            switch (type)
+            {
+                case PacketType.RoomChange:
+                case PacketType.EnemySpawn:
+                case PacketType.EnemyState:
+                case PacketType.EnemyDeath:
+                case PacketType.ProjectileFired:
+                case PacketType.ItemPickup:
+                case PacketType.EnemyProjectileSpawn:
+                case PacketType.EnemyProjectileState:
+                case PacketType.EnemyProjectileDestroy:
+                case PacketType.PlayerBeamState:
+                case PacketType.InteractableUsed:
+                case PacketType.BreakableState:
+                case PacketType.RoomState:
+                case PacketType.PlayerItemUsed:
+                case PacketType.PlayerBlankUsed:
+                case PacketType.GroundPickupSpawn:
+                    return true;
+                default:
+                    return false;
             }
         }
 
@@ -165,7 +227,7 @@ namespace GungeonTogether.Networking
                     var posPacket = (PlayerPositionPacket)packet;
                     if (IsClient && posPacket.PlayerId != SteamReflectionHelper.GetLocalSteamId())
                     {
-                        PlayerManager.Instance.UpdateRemotePlayer(posPacket.PlayerId, posPacket.Position, posPacket.Velocity, posPacket.Rotation, posPacket.FlipX, posPacket.Sequence, posPacket.SpriteId, posPacket.SpriteCollectionName, posPacket.IsDodgeRolling, posPacket.CharacterPrefabKey);
+                        PlayerManager.Instance.UpdateRemotePlayer(posPacket.PlayerId, posPacket);
                     }
                     else if (IsHost)
                     {
@@ -198,10 +260,10 @@ namespace GungeonTogether.Networking
                     break;
                 case PacketType.RoomChange:
                     var roomChange = (RoomChangePacket)packet;
-                    // Client: clear old remote entities and prepare for new room
-                    NetworkEntityManager.Instance.Clear();
-                    EnemyProjectileSyncManager.Instance.Clear();
-                    // Possibly also call LoadRoom on client (but we'll rely on enemy spawns)
+                    if (IsHost && roomChange.IsRequest)
+                        Host.HandleRoomChange(senderId, roomChange);
+                    else if (IsClient && Client.HostId == senderId && !roomChange.IsRequest)
+                        RoomSyncManager.Instance.ApplyPartyTransition(roomChange);
                     break;
 
                 case PacketType.EnemySpawn:
@@ -224,13 +286,18 @@ namespace GungeonTogether.Networking
                         if (matched == null)
                         {
                             AIActor prefab = EnemyDatabase.GetOrLoadByGuid(spawn.PrefabName);
-                            RoomHandler room = ETGReflectionHelper.GetCurrentRoomHandler() as RoomHandler;
+                            RoomHandler room = RoomSyncManager.FindRoom(spawn.RoomIdentifier);
+                            if (room == null && GameManager.Instance != null && GameManager.Instance.Dungeon != null &&
+                                GameManager.Instance.Dungeon.data != null)
+                                room = GameManager.Instance.Dungeon.data.GetAbsoluteRoomFromPosition(spawn.Position.ToIntVector2(VectorConversions.Floor));
+                            if (room == null) room = ETGReflectionHelper.GetCurrentRoomHandler() as RoomHandler;
                             if (prefab != null && room != null)
                                 matched = AIActor.Spawn(prefab, spawn.Position, room, true, AIActor.AwakenAnimationType.Default, true);
                         }
 
                         if (matched != null)
                         {
+                            if (matched.behaviorSpeculator != null) matched.behaviorSpeculator.enabled = false;
                             matched.transform.rotation = Quaternion.Euler(0f, 0f, spawn.Rotation);
                             if (matched.healthHaver != null) matched.healthHaver.ForceSetCurrentHealth(spawn.Health);
                             NetworkEntityManager.Instance.AddRemote(spawn.EnemyId, matched.gameObject);
@@ -253,6 +320,19 @@ namespace GungeonTogether.Networking
                             if (enemyComp.healthHaver != null && !enemyComp.healthHaver.IsDead)
                                 enemyComp.healthHaver.ForceSetCurrentHealth(Mathf.Max(0.01f, state.Health));
                             enemyComp.State = (AIActor.ActorState)state.AIState;
+                            if (enemyComp.specRigidbody != null)
+                            {
+                                enemyComp.specRigidbody.Position = new Position(state.Position);
+                                enemyComp.specRigidbody.Velocity = state.Velocity;
+                                enemyComp.specRigidbody.RecheckTriggers = true;
+                            }
+                            if (enemyComp.sprite != null)
+                            {
+                                if (state.SpriteId >= 0 && enemyComp.sprite.Collection != null &&
+                                    state.SpriteId < enemyComp.sprite.Collection.spriteDefinitions.Length)
+                                    enemyComp.sprite.SetSprite(state.SpriteId);
+                                enemyComp.sprite.FlipX = state.FlipX;
+                            }
                         }
                     }
                     break;
@@ -296,7 +376,11 @@ namespace GungeonTogether.Networking
                     if (IsHost)
                         Host.HandleVitals(senderId, vitals);
                     else if (IsClient && Client.HostId == senderId)
+                    {
                         GameplaySyncManager.Instance.RecordVitals(vitals);
+                        if (vitals.PlayerId == Client.HostId)
+                            GameplaySyncManager.Instance.ApplyHostEconomy(vitals);
+                    }
                     break;
                 case PacketType.PlayerRevive:
                     var revive = (PlayerRevivePacket)packet;
@@ -322,7 +406,101 @@ namespace GungeonTogether.Networking
                     else if (IsClient && Client.HostId == senderId)
                         GameplaySyncManager.Instance.ApplyRemoteBeam(beam, authoritative: false);
                     break;
+                case PacketType.InteractableUsed:
+                    var interaction = (InteractableUsedPacket)packet;
+                    if (IsHost)
+                        Host.HandleInteraction(senderId, interaction);
+                    else if (IsClient && Client.HostId == senderId)
+                        WorldEventSyncManager.Instance.ApplyInteraction(interaction);
+                    break;
+                case PacketType.BreakableState:
+                    var breakable = (BreakableStatePacket)packet;
+                    if (IsHost)
+                        Host.HandleBreak(senderId, breakable);
+                    else if (IsClient && Client.HostId == senderId)
+                        WorldEventSyncManager.Instance.ApplyBreak(breakable);
+                    break;
+                case PacketType.RoomState:
+                    if (IsClient && Client.HostId == senderId)
+                        RoomSyncManager.Instance.ApplyRoomState((RoomStatePacket)packet);
+                    break;
+                case PacketType.PlayerItemUsed:
+                    var itemUsed = (PlayerItemUsedPacket)packet;
+                    if (IsHost)
+                        Host.HandleItemUsed(senderId, itemUsed);
+                    else if (IsClient && Client.HostId == senderId)
+                        GameplaySyncManager.Instance.ApplyRemoteItemUsed(itemUsed);
+                    break;
+                case PacketType.PlayerBlankUsed:
+                    var blankUsed = (PlayerBlankUsedPacket)packet;
+                    if (IsHost)
+                        Host.HandleBlankUsed(senderId, blankUsed);
+                    else if (IsClient && Client.HostId == senderId)
+                        GameplaySyncManager.Instance.ApplyRemoteBlankUsed(blankUsed);
+                    break;
+                case PacketType.LatencyPing:
+                    HandleLatencyPing(senderId, (LatencyPingPacket)packet);
+                    break;
+                case PacketType.GroundPickupSpawn:
+                    if (IsClient && Client.HostId == senderId)
+                        GameplaySyncManager.Instance.ApplyGroundPickupSpawn((GroundPickupSpawnPacket)packet);
+                    break;
             }
+        }
+
+        private void UpdateLatencyPings()
+        {
+            if (CurrentRole == null || Time.realtimeSinceStartup < _nextPingTime) return;
+            _nextPingTime = Time.realtimeSinceStartup + 1f;
+
+            if (IsHost && Host != null)
+            {
+                foreach (ulong clientId in Host.GetConnectedClientIds()) SendLatencyPing(clientId);
+            }
+            else if (IsClient && Client != null && Client.IsConnected)
+            {
+                SendLatencyPing(Client.HostId);
+            }
+        }
+
+        private void SendLatencyPing(ulong targetId)
+        {
+            SendPacket(targetId, new LatencyPingPacket
+            {
+                Sequence = ++_pingSequence,
+                SentAt = Time.realtimeSinceStartup,
+                IsReply = false
+            }, reliable: false);
+        }
+
+        private void HandleLatencyPing(ulong senderId, LatencyPingPacket packet)
+        {
+            if (!packet.IsReply)
+            {
+                packet.IsReply = true;
+                SendPacket(senderId, packet, reliable: false);
+                return;
+            }
+
+            float sample = Mathf.Clamp((Time.realtimeSinceStartup - packet.SentAt) * 1000f, 0f, 9999f);
+            float previous;
+            _roundTripMs[senderId] = _roundTripMs.TryGetValue(senderId, out previous)
+                ? Mathf.Lerp(previous, sample, 0.25f)
+                : sample;
+        }
+
+        public int GetPingMs(ulong playerId)
+        {
+            ulong localId = SteamReflectionHelper.GetLocalSteamId();
+            if (playerId == localId) return IsClient && Client != null ? GetPingMs(Client.HostId) : 0;
+            float value;
+            return _roundTripMs.TryGetValue(playerId, out value) ? Mathf.RoundToInt(value) : -1;
+        }
+
+        public int GetLocalPingMs()
+        {
+            if (IsClient && Client != null) return GetPingMs(Client.HostId);
+            return 0;
         }
 
         public void SendPacket(ulong targetId, INetworkPacket packet, bool reliable = true)

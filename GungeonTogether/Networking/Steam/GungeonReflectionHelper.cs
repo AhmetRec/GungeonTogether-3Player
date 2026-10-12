@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 using GungeonTogether.Systems.Logging;
+using Dungeonator;
 
 namespace GungeonTogether.Networking
 {
@@ -227,30 +228,19 @@ namespace GungeonTogether.Networking
         public static void TeleportToLevel(string levelName, int floorIndex)
         {
             var gm = GetGameManager();
-            bool isCustom = false;
-            if (gm != null && _customFloorsField != null && !string.IsNullOrEmpty(levelName))
-            {
-                var floors = _customFloorsField.GetValue(gm) as System.Collections.IEnumerable;
-                if (floors != null)
-                {
-                    foreach (object definition in floors)
-                    {
-                        if (definition == null) continue;
-                        FieldInfo nameField = definition.GetType().GetField("dungeonSceneName", BindingFlags.Public | BindingFlags.Instance);
-                        string name = nameField != null ? nameField.GetValue(definition) as string : null;
-                        if (string.Equals(name, levelName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            isCustom = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if (isCustom && _loadCustomLevelMethod != null)
+            // LoadCustomLevel handles both built-in dungeonFloors and modded
+            // customFloors by scene name. The old LoadLevelByIndex reflection
+            // targeted a private IEnumerator and therefore silently did nothing.
+            if (gm != null && !string.IsNullOrEmpty(levelName) && _loadCustomLevelMethod != null)
                 _loadCustomLevelMethod.Invoke(gm, new object[] { levelName });
             else
                 TeleportToFloor(floorIndex);
+        }
+
+        public static bool IsLevelLoading()
+        {
+            GameManager gm = GameManager.Instance;
+            return gm == null || gm.IsLoadingLevel || BraveUtility.isLoadingLevel || Dungeon.IsGenerating;
         }
 
         public static Vector3 GetPlayerPosition()
@@ -307,27 +297,140 @@ namespace GungeonTogether.Networking
             _loadFloorMethod.Invoke(gm, new object[] { floorIndex });
         }
 
-        public static void TeleportToPosition(Vector2 position, float rotation)
+        public static bool TeleportToPosition(Vector2 position, float rotation)
         {
-            var gm = GetGameManager();
-            if (gm == null) return;
-            if (_primaryPlayerProperty != null)
+            GameManager gm = GameManager.Instance;
+            PlayerController player = gm != null ? gm.PrimaryPlayer : null;
+            if (player == null) return false;
+
+            // The Breach is not a generated dungeon; a plain warp is enough.
+            if (gm.IsFoyer)
             {
-                var player = _primaryPlayerProperty.GetValue(gm, null);
-                if (player != null)
+                player.WarpToPoint(position, false, true);
+                player.ReinitializeMovementRestrictors();
+                RefreshLocalCamera();
+                return true;
+            }
+
+            if (gm.Dungeon == null || gm.Dungeon.data == null) return false;
+
+            // Only warp onto a real floor cell that belongs to a room. The old
+            // nearestRoom fallback accepted wall/void cells, which put the
+            // player inside solid geometry with nothing rendered: a black screen.
+            IntVector2 origin = new IntVector2(Mathf.FloorToInt(position.x), Mathf.FloorToInt(position.y));
+            IntVector2 cellPosition;
+            RoomHandler targetRoom;
+            if (!TryFindWalkableCell(gm.Dungeon.data, origin, 3, out cellPosition, out targetRoom))
+            {
+                UnityEngine.Debug.LogWarning($"[WorldSync] Host position {position} is not a walkable room cell in the client dungeon.");
+                return false;
+            }
+            if (cellPosition != origin)
+                position = new Vector2(cellPosition.x + 0.5f, cellPosition.y + 0.5f);
+
+            targetRoom.SetRoomActive(true);
+            player.WarpToPoint(position, false, true);
+            player.transform.rotation = Quaternion.Euler(0f, 0f, rotation);
+            if (player.CurrentRoom != targetRoom)
+                player.ForceChangeRoom(targetRoom);
+            targetRoom.OnBecameVisible(player);
+            player.ReinitializeMovementRestrictors();
+
+            if (gm.MainCameraController != null)
+            {
+                gm.MainCameraController.ClearPlayerCache();
+                gm.MainCameraController.AssignBoundingPolygon(targetRoom.cameraBoundingPolygon);
+                gm.MainCameraController.ForceToPlayerPosition(player);
+            }
+            return true;
+        }
+
+        private static bool TryFindWalkableCell(DungeonData data, IntVector2 origin, int radius,
+            out IntVector2 found, out RoomHandler room)
+        {
+            for (int r = 0; r <= radius; r++)
+            {
+                for (int dx = -r; dx <= r; dx++)
                 {
-                    var transformProp = player.GetType().GetProperty("transform");
-                    if (transformProp != null)
+                    for (int dy = -r; dy <= r; dy++)
                     {
-                        var t = transformProp.GetValue(player, null) as Transform;
-                        if (t != null)
+                        if (Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dy)) != r) continue;
+                        IntVector2 candidate = new IntVector2(origin.x + dx, origin.y + dy);
+                        CellData cell = data.GetCellSafe(candidate);
+                        if (cell != null && cell.type == CellType.FLOOR && cell.parentRoom != null)
                         {
-                            t.position = new Vector3(position.x, position.y, 0f);
-                            t.rotation = Quaternion.Euler(0f, 0f, rotation);
+                            found = candidate;
+                            room = cell.parentRoom;
+                            return true;
                         }
                     }
                 }
             }
+            found = origin;
+            room = null;
+            return false;
+        }
+
+        /// <summary>
+        /// Mirrors Foyer.OnDepartedFoyer for a client that is sent straight from
+        /// the Breach into the host's floor. The base game only clears the foyer
+        /// state when the player rides the elevator itself.
+        /// </summary>
+        public static void LeaveFoyerForNetworkLoad()
+        {
+            GameManager gm = GameManager.Instance;
+            if (gm == null || !gm.IsFoyer) return;
+
+            Foyer.DoIntroSequence = false;
+            Foyer.DoMainMenu = false;
+            gm.IsFoyer = false;
+
+            PlayerController[] players = gm.AllPlayers;
+            if (players == null) return;
+            foreach (PlayerController player in players)
+            {
+                if (player == null) continue;
+                try
+                {
+                    if (player.inventory != null) player.inventory.ForceNoGun = false;
+                    if (player.CurrentGun != null) player.CurrentGun.gameObject.SetActive(true);
+                    player.ProcessHandAttachment();
+                    player.ClearOverrideShader();
+                    player.AlternateCostumeLibrary = null;
+                }
+                catch (Exception e)
+                {
+                    UnityEngine.Debug.LogWarning("[WorldSync] Could not reset foyer state for " + player.name + ": " + e.Message);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Safety net: a dungeon scene has no Foyer object, so a remaining
+        /// IsFoyer flag is always stale there.
+        /// </summary>
+        public static void ClearStaleFoyerFlag()
+        {
+            GameManager gm = GameManager.Instance;
+            if (gm == null || !gm.IsFoyer || gm.IsLoadingLevel || Dungeon.IsGenerating) return;
+            if (Foyer.Instance == null && gm.Dungeon != null && gm.Dungeon.data != null && gm.Dungeon.data.rooms != null && gm.Dungeon.data.rooms.Count > 1)
+                LeaveFoyerForNetworkLoad();
+        }
+
+        public static void RefreshLocalCamera()
+        {
+            GameManager gm = GameManager.Instance;
+            PlayerController player = gm != null ? gm.PrimaryPlayer : null;
+            if (player == null || gm.MainCameraController == null) return;
+            gm.MainCameraController.ClearPlayerCache();
+            RoomHandler room = player.CurrentRoom;
+            if (room != null)
+            {
+                room.SetRoomActive(true);
+                room.OnBecameVisible(player);
+                gm.MainCameraController.AssignBoundingPolygon(room.cameraBoundingPolygon);
+            }
+            gm.MainCameraController.ForceToPlayerPosition(player);
         }
 
         // ---- Enemies ----

@@ -1,6 +1,7 @@
 using GungeonTogether.Networking.Interfaces;
 using GungeonTogether.Networking.Steam;
 using GungeonTogether.Networking.Packets;
+using GungeonTogether.Networking.Sync;
 using GungeonTogether.Systems.Logging;
 using UnityEngine;
 using Debug = GungeonTogether.Systems.Logging.Debug;
@@ -50,6 +51,10 @@ namespace GungeonTogether.Networking
                 }, reliable: true);
             }
             if (!IsConnected) return;
+            // Do not publish coordinates from the client's independently
+            // generated dungeon. The host must first load and place us in its
+            // seeded world, otherwise it creates a remote player in empty space.
+            if (!WorldSyncManager.Instance.IsClientWorldReady) return;
 
             if (Time.realtimeSinceStartup < _nextPositionSendTime) return;
             _nextPositionSendTime = Time.realtimeSinceStartup + PositionSendInterval;

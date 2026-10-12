@@ -12,7 +12,20 @@ Modded sessions are supported when every player uses the same BepInEx plugins,
 plugin versions and registered ModTheGungeon items. Incompatible clients are
 rejected with the first detected manifest difference.
 
-Version 0.7 replaces visual-only remote sprites with network-controlled real
+Version 0.9.0 keeps the party in one room and feeds the native co-op camera the
+whole three-player bounding box. It synchronizes enemies in every active room,
+enables the network down/revive loop, makes ground pickups and shared money/keys
+host-authoritative, rejects different generated layouts safely, measures real
+round-trip latency, and transmits the actual gun aim direction.
+
+Version 0.8.3 added the optional Isaac-style three-player HUD. Version 0.8.2
+added shared run seeds, layout fingerprints and safe floor-load fallbacks.
+
+Version 0.8.1 fixes the black/over-zoomed client view during floor transitions by
+parking persistent remote players beside the local player until the synchronized
+dungeon is ready, and retries room placement when generation finishes late.
+
+Version 0.8.0 replaces visual-only remote sprites with network-controlled real
 `PlayerController` instances. Remote players now participate in the built-in
 co-op camera, collision, room, enemy targeting, inventory and floor-transition
 systems. It also fixes the lobby player-list construction error, makes the
@@ -54,13 +67,15 @@ My paypal is llamerrr1@gmail.com if you actually want to (for some reason)
 |:---:|:---:|:---:|
 | Steam invites/lobby system | 🟩 Done | Steam lobby creation and joining functional |
 | Steam P2P networking | 🟨 Working | Real connections and Steam invites working |
-| Basic UI | 🟨 Working | Modern multiplayer menu (Ctrl+P) available |
+| Three-player HUD | 🟨 Working | Isaac-style corner HUD; F8 switches to the native HUD |
 | Player Synchronization | 🟨 Working | Real remote PlayerControllers with 20 Hz movement and animation sync |
-| Three-player co-op | 🟨 Working | All three players join gameplay; extra remotes safely share the native P2 co-op HUD slot |
-| Enemy Synchronization | 🟨 Working | Host-driven transforms, health, AI state and enemy projectiles |
+| Three-player co-op | 🟨 Working | Party room tether, three-player bounds camera and real PlayerControllers |
+| Enemy Synchronization | 🟨 Working | Host-driven enemies across active rooms, including state and projectiles |
 | Weapon Synchronization | 🟨 Working | Regular, multi-shot, charged projectile and beam replication |
 | Reconnection | 🟨 Working | Run roster locks after leaving the foyer; prior members can reconnect |
-| Dungeon Synchronization | 🟥 Planned | Save and load system working |
+| Dungeon Synchronization | 🟨 Working | Shared seed, layout fingerprint and safe mismatch rejection |
+| Items/economy | 🟨 Working | Host-authoritative ground pickups, shared keys and money |
+| Down/revive | 🟨 Working | Nearby living teammate revives a downed player after three seconds |
 | Singleplayer | 🏁 Finished | Yippeeee!!!!! |
 
 ## Planed for 1.0 release
@@ -72,7 +87,6 @@ My paypal is llamerrr1@gmail.com if you actually want to (for some reason)
   - Projectiles
   - Dungeon
 - Debug controls for testing
-- Teammate DBNO system + revive mechanic
 - Spectate when dead
 - Enemy scaling (set difficulty in game)
   
@@ -94,8 +108,8 @@ My paypal is llamerrr1@gmail.com if you actually want to (for some reason)
 ## Building
 This only applies to people who want to build from source, or if we forget to post builds :)
 1. You will need to setup BepInExPack_ETG (either with a mod manager like r2ModMan or manually)
-2. Run the build script `build.ps1` in the GungeonTogether folder
-3. Pray it works because honestly I have no idea if it does
+2. Place the required game, BepInEx and ModTheGungeon reference assemblies in `GungeonTogether/Libs/`
+3. Run `dotnet build GungeonTogether/GungeonTogether.csproj -c Release`
 4. Launch Enter the Gungeon
 
 ## Technical Details

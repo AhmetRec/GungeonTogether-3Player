@@ -22,6 +22,9 @@ namespace GungeonTogether.Networking.Packets
         public string SpriteCollectionName;
         public bool FlipX;
         public string CharacterPrefabKey;
+        public int GunId;
+        public string GunKey;
+        public Vector2 AimDirection;
 
         public void Serialize(BinaryWriter writer)
         {
@@ -40,6 +43,10 @@ namespace GungeonTogether.Networking.Packets
             writer.Write(SpriteCollectionName ?? "");
             writer.Write(FlipX);
             writer.Write(CharacterPrefabKey ?? "");
+            writer.Write(GunId);
+            writer.Write(GunKey ?? "");
+            writer.Write(AimDirection.x);
+            writer.Write(AimDirection.y);
         }
 
         public void Deserialize(BinaryReader reader)
@@ -57,6 +64,9 @@ namespace GungeonTogether.Networking.Packets
             SpriteCollectionName = reader.ReadString();
             FlipX = reader.ReadBoolean();
             CharacterPrefabKey = reader.ReadString();
+            GunId = reader.ReadInt32();
+            GunKey = reader.ReadString();
+            AimDirection = new Vector2(reader.ReadSingle(), reader.ReadSingle());
         }
     }
 }
