@@ -33,7 +33,7 @@ namespace GungeonTogether.Networking
 
         // Protocol v2 adds explicit three-player session capacity and richer
         // connection rejection packets. Older builds must not join these lobbies.
-        public const int ProtocolVersion = 5;
+        public const int ProtocolVersion = 6;
         public const int MaxPlayers = 3;
         public const int MaxClients = MaxPlayers - 1;
 
@@ -74,6 +74,7 @@ namespace GungeonTogether.Networking
         public void StartHosting()
         {
             if (CurrentRole != null) Shutdown();
+            WorldSyncManager.Instance.ResetSession();
 
             IsHost = true;
             IsClient = false;
@@ -89,6 +90,7 @@ namespace GungeonTogether.Networking
         public void ConnectTo(ulong hostId)
         {
             if (CurrentRole != null) Shutdown();
+            WorldSyncManager.Instance.ResetSession();
 
             IsHost = false;
             IsClient = true;
@@ -107,6 +109,7 @@ namespace GungeonTogether.Networking
             EnemyProjectileSyncManager.Instance.Clear();
             GameplaySyncManager.Instance.ClearNetworkState();
             PlayerManager.Instance.ClearAll();
+            WorldSyncManager.Instance.ResetSession();
             CurrentRole = null;
             Host = null;
             Client = null;
@@ -118,19 +121,17 @@ namespace GungeonTogether.Networking
         {
             try
             {
-                Debug.Log($"[NetworkManager] HandlePacket from {senderId}, data length={data.Length}");
                 INetworkPacket packet = PacketSerializer.Deserialize(data);
                 if (packet == null)
                 {
                     Debug.LogWarning($"[NetworkManager] Failed to deserialize packet from {senderId}");
                     return;
                 }
-                Debug.Log($"[NetworkManager] Received packet type: {packet.Type} from {senderId}");
                 ProcessPacket(senderId, packet);
             }
             catch (Exception e)
             {
-                Debug.LogError($"Error handling packet from {senderId}: {e.Message}");
+                Debug.LogError($"Error handling packet from {senderId}: {e}");
             }
         }
 
@@ -164,7 +165,7 @@ namespace GungeonTogether.Networking
                     var posPacket = (PlayerPositionPacket)packet;
                     if (IsClient && posPacket.PlayerId != SteamReflectionHelper.GetLocalSteamId())
                     {
-                        PlayerManager.Instance.UpdateRemotePlayer(posPacket.PlayerId, posPacket.Position, posPacket.Rotation, posPacket.FlipX);
+                        PlayerManager.Instance.UpdateRemotePlayer(posPacket.PlayerId, posPacket.Position, posPacket.Velocity, posPacket.Rotation, posPacket.FlipX, posPacket.Sequence, posPacket.SpriteId, posPacket.SpriteCollectionName, posPacket.IsDodgeRolling);
                     }
                     else if (IsHost)
                     {

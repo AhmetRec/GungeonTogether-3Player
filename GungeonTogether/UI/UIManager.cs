@@ -3,6 +3,7 @@ using GungeonTogether.Networking;
 using GungeonTogether.Networking.Steam;
 using GungeonTogether.Systems.Logging;
 using Debug = GungeonTogether.Systems.Logging.Debug;
+using Exception = System.Exception;
 using System.Collections.Generic;
 
 namespace GungeonTogether.UI
@@ -18,6 +19,9 @@ namespace GungeonTogether.UI
 		private static MainMenuFoyerController _mainMenuController;
 		private static bool _singlePlayerHandlerAttached;
 		private static bool _launchingHostedGame;
+		private static bool _pendingNetworkGameEntry;
+		private static float _nextGameEntryAttempt;
+		private static float _nextUiErrorLog;
 		
 		private static dfPanel _playerListPanel;
 		private static dfScrollPanel _playerScrollPanel;
@@ -43,9 +47,12 @@ namespace GungeonTogether.UI
 				{
 					SetVisible(false);
 					if (SteamLobbyManager.Instance.IsInLobby && NetworkManager.Instance.IsClient)
-						EnterJoinedGameFromMainMenu();
+						_pendingNetworkGameEntry = true;
+					TryEnterNetworkGameFromMainMenu();
 					return;
 				}
+				_pendingNetworkGameEntry = false;
+				_launchingHostedGame = false;
 
 				if (!gameManager.IsFoyer)
 				{
@@ -60,7 +67,14 @@ namespace GungeonTogether.UI
 				UpdateStatus();
 				SubscribeEvents();
 			}
-			catch { }
+			catch (Exception e)
+			{
+				if (Time.realtimeSinceStartup >= _nextUiErrorLog)
+				{
+					_nextUiErrorLog = Time.realtimeSinceStartup + 2f;
+					Debug.LogWarning("[UI] Update failed: " + e);
+				}
+			}
 		}
 
 		private static void EnsureMainMenuHostButton()
@@ -301,9 +315,8 @@ namespace GungeonTogether.UI
 				return;
 
 			Debug.Log("[UI] Main-menu Host Lobby clicked.");
-			_launchingHostedGame = true;
+			_pendingNetworkGameEntry = true;
 			SteamLobbyManager.Instance.CreateLobby(NetworkManager.MaxPlayers);
-			_mainMenuController.NewGameButton.DoClick();
 		}
 
 		private static void OnSinglePlayerClicked(dfControl control, dfMouseEventArgs mouseEvent)
@@ -321,12 +334,16 @@ namespace GungeonTogether.UI
 				NetworkManager.Instance.Shutdown();
 		}
 
-		private static void EnterJoinedGameFromMainMenu()
+		private static void TryEnterNetworkGameFromMainMenu()
 		{
-			if (_mainMenuController == null || _launchingHostedGame) return;
-			Debug.Log("[UI] Entering the foyer after accepting a lobby invite.");
+			if (!_pendingNetworkGameEntry || _mainMenuController == null || _launchingHostedGame) return;
+			if (!SteamLobbyManager.Instance.IsInLobby || !NetworkManager.Instance.IsConnected) return;
+			if (Time.realtimeSinceStartup < _nextGameEntryAttempt) return;
+			_nextGameEntryAttempt = Time.realtimeSinceStartup + 0.75f;
+			Debug.Log("[UI] Entering the foyer for the network lobby.");
 			_launchingHostedGame = true;
 			_mainMenuController.NewGameButton.DoClick();
+			_launchingHostedGame = false;
 		}
 
 		private static void OnMainMenuHostFocused(dfControl control, dfFocusEventArgs args)

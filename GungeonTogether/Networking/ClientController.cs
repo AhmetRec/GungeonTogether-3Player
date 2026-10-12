@@ -15,7 +15,7 @@ namespace GungeonTogether.Networking
         public ulong HostId => _hostId;
 
         private float _nextPositionSendTime;
-        private const float PositionSendInterval = 0.25f;
+        private const float PositionSendInterval = 0.05f;
 
         public void Initialise()
         {
@@ -61,7 +61,6 @@ namespace GungeonTogether.Networking
             if (packet == null) return;
 
             SendPacket(_hostId, packet, reliable: false);
-            Debug.Log($"[Client] Sent position packet: ({packet.Position.x:0.00}, {packet.Position.y:0.00})");
         }
 
         public void HandleConnectionAccepted(ulong senderId, ConnectionAcceptedPacket packet)

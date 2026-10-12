@@ -12,8 +12,10 @@ Modded sessions are supported when every player uses the same BepInEx plugins,
 plugin versions and registered ModTheGungeon items. Incompatible clients are
 rejected with the first detected manifest difference.
 
-Version 0.5 adds host-authoritative enemy projectiles, exact projectile matching
-for multi-shot/charged guns, beam synchronization, and a locked run roster. New
+Version 0.6 adds persistent remote players across scene changes, smoother 20 Hz
+player snapshots, stable host-driven floor transitions, exact modded pickup
+identity matching, and safer gameplay patches. Version 0.5 added host-authoritative
+enemy projectiles, exact projectile matching for multi-shot/charged guns, beam synchronization, and a locked run roster. New
 players may join in the foyer; after the run starts, only a disconnected member
 of that run may reconnect.
 

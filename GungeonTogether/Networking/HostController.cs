@@ -20,7 +20,7 @@ namespace GungeonTogether.Networking
         private bool _runLocked;
         private SteamP2PManager _p2p;
         private float _nextPositionSendTime;
-        private const float PositionSendInterval = 0.25f;
+        private const float PositionSendInterval = 0.05f;
 
         public void Initialise()
         {
@@ -37,7 +37,8 @@ namespace GungeonTogether.Networking
 
         public void Update()
         {
-            if (!_runLocked && ETGReflectionHelper.GetGameManager() != null && !ETGReflectionHelper.IsInFoyer())
+            if (!_runLocked && ETGReflectionHelper.GetGameManager() != null && !Foyer.DoMainMenu &&
+                !ETGReflectionHelper.IsInFoyer() && ETGReflectionHelper.GetCurrentFloorIndex() > 0)
             {
                 _runLocked = true;
                 foreach (ulong client in _preRunMembers)
@@ -270,8 +271,7 @@ namespace GungeonTogether.Networking
             bool isFirstPosition = !_lastPlayerPositions.ContainsKey(senderId);
             _lastPlayerPositions[senderId] = packet;
 
-            Debug.Log($"[Host] Position from {playerId}: ({packet.Position.x:0.00}, {packet.Position.y:0.00})");
-            PlayerManager.Instance.UpdateRemotePlayer(playerId, packet.Position, packet.Rotation, packet.FlipX);
+            PlayerManager.Instance.UpdateRemotePlayer(playerId, packet.Position, packet.Velocity, packet.Rotation, packet.FlipX, packet.Sequence, packet.SpriteId, packet.SpriteCollectionName, packet.IsDodgeRolling);
 
             if (isFirstPosition)
             {
@@ -390,7 +390,6 @@ namespace GungeonTogether.Networking
                     count++;
                 }
             }
-            Debug.Log($"[Host] Broadcasted {packet.Type} to {count} clients (excluded {excludeId})");
         }
         public void HandleClientDisconnect(ulong clientId)
         {

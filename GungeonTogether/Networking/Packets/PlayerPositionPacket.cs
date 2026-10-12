@@ -10,6 +10,8 @@ namespace GungeonTogether.Networking.Packets
         public PacketType Type => PacketType.PlayerPosition;
 
         public ulong PlayerId;
+        public uint Sequence;
+        public float SenderTime;
         public Vector2 Position;
         public Vector2 Velocity;
         public float Rotation;
@@ -17,11 +19,14 @@ namespace GungeonTogether.Networking.Packets
         public bool IsDodgeRolling;
         public int AnimationState;
         public int SpriteId;
+        public string SpriteCollectionName;
         public bool FlipX;
 
         public void Serialize(BinaryWriter writer)
         {
             writer.Write(PlayerId);
+            writer.Write(Sequence);
+            writer.Write(SenderTime);
             writer.Write(Position.x);
             writer.Write(Position.y);
             writer.Write(Velocity.x);
@@ -31,12 +36,15 @@ namespace GungeonTogether.Networking.Packets
             writer.Write(IsDodgeRolling);
             writer.Write(AnimationState);
             writer.Write(SpriteId);
+            writer.Write(SpriteCollectionName ?? "");
             writer.Write(FlipX);
         }
 
         public void Deserialize(BinaryReader reader)
         {
             PlayerId = reader.ReadUInt64();
+            Sequence = reader.ReadUInt32();
+            SenderTime = reader.ReadSingle();
             Position = new Vector2(reader.ReadSingle(), reader.ReadSingle());
             Velocity = new Vector2(reader.ReadSingle(), reader.ReadSingle());
             Rotation = reader.ReadSingle();
@@ -44,6 +52,7 @@ namespace GungeonTogether.Networking.Packets
             IsDodgeRolling = reader.ReadBoolean();
             AnimationState = reader.ReadInt32();
             SpriteId = reader.ReadInt32();
+            SpriteCollectionName = reader.ReadString();
             FlipX = reader.ReadBoolean();
         }
     }

@@ -477,27 +477,37 @@ namespace GungeonTogether.Networking.Sync
 
         private void InstallPatches()
         {
-            try
+            Harmony harmony = new Harmony("com.llamerrr.gungeontogether.gameplay-sync");
+            var postfix = new HarmonyMethod(typeof(GameplaySyncManager).GetMethod("PickupPostfix", BindingFlags.NonPublic | BindingFlags.Static));
+            var seen = new HashSet<MethodBase>();
+            foreach (Type type in new[] { typeof(Gun), typeof(PassiveItem), typeof(PlayerItem) })
             {
-                Harmony harmony = new Harmony("com.llamerrr.gungeontogether.gameplay-sync");
-                var postfix = new HarmonyMethod(typeof(GameplaySyncManager).GetMethod("PickupPostfix", BindingFlags.NonPublic | BindingFlags.Static));
-                var seen = new HashSet<MethodBase>();
-                foreach (Type type in new[] { typeof(PickupObject), typeof(Gun), typeof(PassiveItem), typeof(PlayerItem) })
+                try
                 {
                     MethodInfo method = AccessTools.Method(type, "Pickup", new[] { typeof(PlayerController) });
-                    if (method != null && seen.Add(method)) harmony.Patch(method, null, postfix);
+                    if (method == null || method.IsAbstract || !seen.Add(method)) continue;
+                    harmony.Patch(method, null, postfix);
+                    Debug.Log("[GameplaySync] Patched pickup handler: " + method.DeclaringType.FullName + "." + method.Name);
                 }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[GameplaySync] Could not patch " + type.FullName + ".Pickup: " + e);
+                }
+            }
 
+            try
+            {
                 MethodInfo die = AccessTools.Method(typeof(PlayerController), "Die");
                 if (die != null)
                 {
                     var prefix = new HarmonyMethod(typeof(GameplaySyncManager).GetMethod("DeathPrefix", BindingFlags.NonPublic | BindingFlags.Static));
                     harmony.Patch(die, prefix, null);
+                    Debug.Log("[GameplaySync] Patched PlayerController.Die.");
                 }
             }
             catch (Exception e)
             {
-                Debug.LogWarning("[GameplaySync] Harmony patch setup failed: " + e.Message);
+                Debug.LogWarning("[GameplaySync] Could not patch PlayerController.Die: " + e);
             }
         }
 

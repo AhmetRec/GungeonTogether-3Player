@@ -108,7 +108,8 @@ namespace GungeonTogether.Networking.Steam
             {
                 TryRetrieveSteamId();
             }
-            
+            if (!_steamIdRetrieved || LocalSteamID == 0) return;
+
             ReadPackets();
         }
 
@@ -302,6 +303,7 @@ namespace GungeonTogether.Networking.Steam
 
         private int _readPacketsCallCount = 0;
         private const int READ_PACKETS_LOG_INTERVAL = 60;
+        private float _nextReadErrorLogTime;
 
         private void ReadPackets()
         {
@@ -325,7 +327,6 @@ namespace GungeonTogether.Networking.Steam
                     object[] availArgs = new object[] { msgSize, CHANNEL_INDEX };
                     bool isAvailable = (bool)isAvailableMethod.Invoke(null, availArgs);
                     if (!isAvailable) break;
-                    Debug.Log($"[SteamP2P] Packet available from some sender, size {msgSize}");
                     msgSize = (uint)availArgs[0];
 
                     byte[] data = new byte[msgSize];
@@ -342,7 +343,6 @@ namespace GungeonTogether.Networking.Steam
                     {
                         senderCSteamID = readArgs[3];
                         senderId = ExtractSteamID(senderCSteamID);
-                        Debug.Log($"[SteamP2P] Received packet from {senderId}, size={actualMsgSize}");
                         if (actualMsgSize != data.Length)
                         {
                             byte[] trimmedData = new byte[actualMsgSize];
@@ -356,9 +356,13 @@ namespace GungeonTogether.Networking.Steam
                 // Optionally log if no packets every 60 frames (to confirm polling works)
                 // We'll skip for brevity.
             }
-            catch (Exception)
+            catch (Exception e)
             {
-                // suppress spam
+                if (Time.realtimeSinceStartup >= _nextReadErrorLogTime)
+                {
+                    _nextReadErrorLogTime = Time.realtimeSinceStartup + 2f;
+                    Debug.LogError("[SteamP2P] Packet read failed: " + e);
+                }
             }
         }
 
@@ -368,13 +372,10 @@ namespace GungeonTogether.Networking.Steam
 
             try
             {
-                Debug.Log($"[SteamP2P] SendPacket to {targetSteamId}, size={data.Length}");
                 object steamIdObj = SteamReflectionHelper.CreateCSteamID(targetSteamId);
                 bool success = SteamReflectionHelper.TryDifferentSendSignatures(steamIdObj, data, reliable);
                 if (!success)
                     Debug.LogError($"[SteamP2P] Failed to send P2P packet to {targetSteamId}");
-                else
-                    Debug.Log($"[SteamP2P] SendPacket to {targetSteamId} succeeded");
             }
             catch (Exception e)
             {

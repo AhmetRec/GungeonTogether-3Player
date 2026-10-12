@@ -23,6 +23,10 @@ namespace GungeonTogether.Networking
         }
 
         private Dictionary<ulong, RemotePlayerAvatar> _remotePlayers = new Dictionary<ulong, RemotePlayerAvatar>();
+        private Vector2 _lastLocalPosition;
+        private float _lastLocalSampleTime;
+        private bool _hasLocalSample;
+        private uint _localSequence;
 
         public PlayerPositionPacket CreateLocalPositionPacket(ulong playerId)
         {
@@ -31,16 +35,32 @@ namespace GungeonTogether.Networking
             if (player == null) return null;
 
             Vector3 pos3 = player.transform.position;
+            Vector2 position = new Vector2(pos3.x, pos3.y);
+            float now = Time.realtimeSinceStartup;
+            Vector2 velocity = Vector2.zero;
+            if (_hasLocalSample)
+            {
+                float elapsed = now - _lastLocalSampleTime;
+                if (elapsed > 0.001f && elapsed < 1f)
+                    velocity = (position - _lastLocalPosition) / elapsed;
+            }
+            _lastLocalPosition = position;
+            _lastLocalSampleTime = now;
+            _hasLocalSample = true;
+
             var packet = new PlayerPositionPacket
             {
                 PlayerId = playerId,
-                Position = new Vector2(pos3.x, pos3.y),
-                Velocity = Vector2.zero,
+                Sequence = ++_localSequence,
+                SenderTime = now,
+                Position = position,
+                Velocity = velocity,
                 Rotation = player.transform.eulerAngles.z,
                 IsGrounded = true,
                 IsDodgeRolling = player.IsDodgeRolling,
                 AnimationState = player.spriteAnimator != null ? player.spriteAnimator.CurrentFrame : 0,
-                SpriteId = -1,
+                SpriteId = player.sprite != null ? player.sprite.spriteId : -1,
+                SpriteCollectionName = player.sprite != null && player.sprite.Collection != null ? player.sprite.Collection.name : "",
                 FlipX = player.sprite != null && player.sprite.FlipX
             };
 
@@ -49,25 +69,30 @@ namespace GungeonTogether.Networking
 
         public void SpawnRemotePlayer(ulong steamId, Vector2 position, float rotation)
         {
-            if (_remotePlayers.ContainsKey(steamId)) return;
+            RemotePlayerAvatar existing;
+            if (_remotePlayers.TryGetValue(steamId, out existing))
+            {
+                if (existing != null) return;
+                _remotePlayers.Remove(steamId);
+            }
 
             RemotePlayerAvatar player = RemotePlayerAvatar.Create(steamId, position, rotation);
             _remotePlayers[steamId] = player;
             Debug.Log($"[PlayerManager] Spawned remote player {steamId} at {position}");
         }
 
-        public void UpdateRemotePlayer(ulong steamId, Vector2 position, float rotation, bool flipX = false)
+        public void UpdateRemotePlayer(ulong steamId, Vector2 position, Vector2 velocity, float rotation, bool flipX, uint sequence, int spriteId, string spriteCollectionName, bool isDodgeRolling)
         {
-            if (!_remotePlayers.ContainsKey(steamId))
+            RemotePlayerAvatar player;
+            if (!_remotePlayers.TryGetValue(steamId, out player) || player == null)
             {
+                _remotePlayers.Remove(steamId);
                 SpawnRemotePlayer(steamId, position, rotation);
+                _remotePlayers.TryGetValue(steamId, out player);
             }
 
-            RemotePlayerAvatar player;
-            if (_remotePlayers.TryGetValue(steamId, out player))
-            {
-                player.Apply(position, rotation, flipX);
-            }
+            if (player != null)
+                player.Apply(position, velocity, rotation, flipX, sequence, spriteId, spriteCollectionName, isDodgeRolling);
         }
 
         public void RemoveRemotePlayer(ulong steamId)
@@ -91,8 +116,10 @@ namespace GungeonTogether.Networking
         public void ClearAll()
         {
             foreach (var kvp in _remotePlayers)
-                Destroy(kvp.Value.gameObject);
+                if (kvp.Value != null) Destroy(kvp.Value.gameObject);
             _remotePlayers.Clear();
+            _hasLocalSample = false;
+            _localSequence = 0;
         }
     }
 }

@@ -48,6 +48,8 @@ namespace GungeonTogether.Networking.Steam
         private object _richPresenceJoinRequestedCb;
         private ulong _pendingLobbyId;
         private ulong _joiningLobbyId;
+        private DateTime _nextMemberRefreshUtc;
+        private string _lastMemberSignature = "";
 
         public SteamLobbyManager()
         {
@@ -108,6 +110,12 @@ namespace GungeonTogether.Networking.Steam
                     ulong lobbyId = _pendingLobbyId;
                     _pendingLobbyId = 0;
                     JoinLobby(lobbyId);
+                }
+
+                if (IsInLobby && DateTime.UtcNow >= _nextMemberRefreshUtc)
+                {
+                    _nextMemberRefreshUtc = DateTime.UtcNow.AddMilliseconds(750);
+                    RefreshPlayerListIfChanged();
                 }
             }
             catch (Exception e)
@@ -191,6 +199,8 @@ namespace GungeonTogether.Networking.Steam
             IsInLobby = false;
             CurrentLobbyId = 0;
             _joiningLobbyId = 0;
+            _lastMemberSignature = "";
+            UpdatePlayerList();
             Debug.Log("[SteamLobby] Left lobby.");
         }
 
@@ -717,6 +727,18 @@ namespace GungeonTogether.Networking.Steam
         private void UpdatePlayerList()
         {
             OnPlayerListChanged?.Invoke();
+        }
+
+        private void RefreshPlayerListIfChanged()
+        {
+            List<ulong> members = GetLobbyMembers();
+            members.Sort();
+            string[] ids = new string[members.Count];
+            for (int i = 0; i < members.Count; i++) ids[i] = members[i].ToString();
+            string signature = string.Join(",", ids);
+            if (signature == _lastMemberSignature) return;
+            _lastMemberSignature = signature;
+            UpdatePlayerList();
         }
     }
 }

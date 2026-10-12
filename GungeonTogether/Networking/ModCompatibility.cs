@@ -40,19 +40,31 @@ namespace GungeonTogether.Networking
         public static string GetPickupKey(PickupObject pickup)
         {
             if (pickup == null || ETGMod.Databases.Items == null) return "";
+            string bestKey = "";
             foreach (var pair in ETGMod.Databases.Items.ModItemMap)
             {
-                if (ReferenceEquals(pair.Value, pickup)) return pair.Key;
+                PickupObject registered = pair.Value;
+                if (registered == null) continue;
+                if (!ReferenceEquals(registered, pickup) && registered.PickupObjectId != pickup.PickupObjectId) continue;
+                if (string.IsNullOrEmpty(bestKey) || string.CompareOrdinal(pair.Key, bestKey) < 0)
+                    bestKey = pair.Key;
             }
-            return "";
+            return bestKey;
         }
 
         public static PickupObject ResolvePickup(string key, int fallbackId)
         {
             if (!string.IsNullOrEmpty(key) && ETGMod.Databases.Items != null)
             {
-                PickupObject modded = ETGMod.Databases.Items[key];
-                if (modded != null) return modded;
+                try
+                {
+                    PickupObject modded = ETGMod.Databases.Items[key];
+                    if (modded != null) return modded;
+                }
+                catch (Exception e)
+                {
+                    GungeonTogether.Systems.Logging.Debug.LogWarning("[ModCompatibility] Could not resolve modded pickup '" + key + "': " + e.Message);
+                }
             }
             return PickupObjectDatabase.GetById(fallbackId);
         }
