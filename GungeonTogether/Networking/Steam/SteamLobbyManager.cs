@@ -101,7 +101,7 @@ namespace GungeonTogether.Networking.Steam
             }
         }
 
-        public void CreateLobby(int maxMembers = 4)
+        public void CreateLobby(int maxMembers = NetworkManager.MaxPlayers)
         {
             if (!IsInitialised) return;
             if (SteamReflectionHelper.CreateLobbyMethod == null)
@@ -317,6 +317,7 @@ namespace GungeonTogether.Networking.Steam
                         object lobbySteamId = SteamReflectionHelper.CreateCSteamID(lobbyId);
                         SteamReflectionHelper.SetLobbyDataMethod.Invoke(null, new object[] { lobbySteamId, "gt_host", SteamReflectionHelper.GetLocalSteamId().ToString() });
                         SteamReflectionHelper.SetLobbyDataMethod.Invoke(null, new object[] { lobbySteamId, "gt_proto", Networking.NetworkManager.ProtocolVersion.ToString() });
+                        SteamReflectionHelper.SetLobbyDataMethod.Invoke(null, new object[] { lobbySteamId, "gt_max_players", Networking.NetworkManager.MaxPlayers.ToString() });
                         Debug.Log("[SteamLobby] Lobby data set");
                     }
 

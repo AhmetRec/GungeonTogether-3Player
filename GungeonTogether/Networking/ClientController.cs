@@ -12,6 +12,7 @@ namespace GungeonTogether.Networking
         private ulong _hostId;
         private SteamP2PManager _p2p;
         public bool IsConnected { get; private set; }
+        public ulong HostId => _hostId;
 
         private float _nextPositionSendTime;
         private const float PositionSendInterval = 0.25f;
@@ -44,7 +45,8 @@ namespace GungeonTogether.Networking
                 SendPacket(_hostId, new ConnectionRequestPacket
                 {
                     ClientId = _p2p.LocalSteamID,
-                    ProtocolVersion = NetworkManager.ProtocolVersion
+                    ProtocolVersion = NetworkManager.ProtocolVersion,
+                    ModManifest = ModCompatibility.GetManifest()
                 }, reliable: true);
             }
             if (!IsConnected) return;
@@ -89,7 +91,8 @@ namespace GungeonTogether.Networking
             // only cleared on ConnectionAccepted.
             _connectPending = false;
             IsConnected = false;
-            Debug.LogWarning($"[Client] Connection rejected by host {senderId} (host protocol={packet.ProtocolVersion}, local={NetworkManager.ProtocolVersion}). Halting connection attempts.");
+            string reason = string.IsNullOrEmpty(packet.Reason) ? "Connection rejected" : packet.Reason;
+            Debug.LogWarning($"[Client] Connection rejected by host {senderId}: {reason} (host protocol={packet.ProtocolVersion}, local={NetworkManager.ProtocolVersion}). Halting connection attempts.");
         }
 
         public void Shutdown()

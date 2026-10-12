@@ -42,7 +42,7 @@ namespace GungeonTogether.Networking.Sync
             else
             {
                 // Fallback: check if scene is changing
-                _isLoading = UnityEngine.SceneManagement.SceneManager.GetActiveScene().isLoaded; // not reliable
+                _isLoading = !UnityEngine.SceneManagement.SceneManager.GetActiveScene().isLoaded;
             }
 
             if (_isLoading != _wasLoading)

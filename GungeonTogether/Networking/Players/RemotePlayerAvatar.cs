@@ -60,6 +60,12 @@ namespace GungeonTogether.Networking
             }
         }
 
+        public void SetDowned(bool downed)
+        {
+            if (_sprite != null)
+                _sprite.color = downed ? new Color(0.55f, 0.55f, 0.55f, 0.8f) : Color.white;
+        }
+
         private void Update()
         {
             if (!_hasTarget) return;

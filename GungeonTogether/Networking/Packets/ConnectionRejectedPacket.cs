@@ -9,8 +9,18 @@ namespace GungeonTogether.Networking.Packets
         public PacketType Type => PacketType.ConnectionRejected;
 
         public int ProtocolVersion; // why rejected
+        public string Reason;
 
-        public void Serialize(BinaryWriter writer) => writer.Write(ProtocolVersion);
-        public void Deserialize(BinaryReader reader) => ProtocolVersion = reader.ReadInt32();
+        public void Serialize(BinaryWriter writer)
+        {
+            writer.Write(ProtocolVersion);
+            writer.Write(Reason ?? "");
+        }
+
+        public void Deserialize(BinaryReader reader)
+        {
+            ProtocolVersion = reader.ReadInt32();
+            Reason = reader.ReadString();
+        }
     }
 }

@@ -17,5 +17,13 @@ namespace GungeonTogether.Networking.Enums
         WorldState = 12,
         PlayerState = 13,
         LoadingState = 14,
+        ProjectileFired = 15,
+        ItemPickup = 16,
+        PlayerVitals = 17,
+        PlayerRevive = 18,
+        EnemyProjectileSpawn = 19,
+        EnemyProjectileState = 20,
+        EnemyProjectileDestroy = 21,
+        PlayerBeamState = 22,
     }
 }

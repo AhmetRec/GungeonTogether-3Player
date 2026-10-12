@@ -203,7 +203,7 @@ namespace GungeonTogether.UI
 		private static void OnHostClicked(dfControl control, dfMouseEventArgs mouseEvent)
 		{
 			Debug.Log("[UI] Host Lobby clicked.");
-			SteamLobbyManager.Instance.CreateLobby(4);
+			SteamLobbyManager.Instance.CreateLobby(NetworkManager.MaxPlayers);
 		}
 
 		private static void OnInviteClicked(dfControl control, dfMouseEventArgs mouseEvent)

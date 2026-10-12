@@ -81,6 +81,13 @@ namespace GungeonTogether.Networking
             }
         }
 
+        public void SetRemotePlayerDowned(ulong steamId, bool downed)
+        {
+            RemotePlayerAvatar player;
+            if (_remotePlayers.TryGetValue(steamId, out player))
+                player.SetDowned(downed);
+        }
+
         public void ClearAll()
         {
             foreach (var kvp in _remotePlayers)

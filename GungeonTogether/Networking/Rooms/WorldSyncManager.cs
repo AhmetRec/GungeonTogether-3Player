@@ -51,7 +51,9 @@ namespace GungeonTogether.Networking.Sync
             float rot = ETGReflectionHelper.GetPlayerRotation();
 
             // Build a unique string representing the state
-            string currentState = $"{isFoyer}|{floorIndex}|{roomId}|{pos.x:F2}|{pos.y:F2}";
+            int runSeed = ETGReflectionHelper.GetCurrentRunSeed();
+            string levelName = ETGReflectionHelper.GetCurrentLevelName();
+            string currentState = $"{isFoyer}|{floorIndex}|{levelName}|{roomId}|{runSeed}";
 
             if (currentState != _lastWorldState)
             {
@@ -62,6 +64,8 @@ namespace GungeonTogether.Networking.Sync
                 {
                     IsFoyer = isFoyer,
                     FloorIndex = floorIndex,
+                    RunSeed = runSeed,
+                    LevelName = levelName,
                     RoomIdentifier = roomId,
                     Position = new Vector2(pos.x, pos.y),
                     Rotation = rot
@@ -81,14 +85,6 @@ namespace GungeonTogether.Networking.Sync
             {
                 ApplyNow(packet);
             }
-            // If we are loading, delay teleport until done
-            if (LoadingSyncManager.Instance.IsClientLoading)
-            {
-                Debug.Log("[WorldSync] Client is loading, delaying world state apply.");
-                StartCoroutine(DelayedApply(packet));
-                return;
-            }
-            ApplyNow(packet);
         }
 
         private IEnumerator DelayedApply(WorldStatePacket packet)
@@ -116,9 +112,11 @@ namespace GungeonTogether.Networking.Sync
             else
             {
                 int currentFloor = ETGReflectionHelper.GetCurrentFloorIndex();
-                if (currentFloor != packet.FloorIndex)
+                string currentLevel = ETGReflectionHelper.GetCurrentLevelName();
+                if (currentFloor != packet.FloorIndex || !string.Equals(currentLevel, packet.LevelName, System.StringComparison.OrdinalIgnoreCase))
                 {
-                    ETGReflectionHelper.TeleportToFloor(packet.FloorIndex);
+                    ETGReflectionHelper.SetCurrentRunSeed(packet.RunSeed);
+                    ETGReflectionHelper.TeleportToLevel(packet.LevelName, packet.FloorIndex);
                     StartCoroutine(SetPositionAfterDelay(packet.Position, packet.Rotation, 1.0f));
                 }
                 else

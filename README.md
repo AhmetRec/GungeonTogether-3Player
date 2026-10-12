@@ -1,6 +1,21 @@
 # GungeonTogether
 
+This experimental continuation is based on the original
+[GungeonTogether project](https://github.com/llamerrr/GungeonTogether) by lam
+and contributors. It remains available under the included MIT License.
+
 GungeonTogether is a multiplayer mod for Enter the Gungeon that allows online co-op play using Steam P2P networking.
+
+The current session size is three players: one host and up to two clients.
+
+Modded sessions are supported when every player uses the same BepInEx plugins,
+plugin versions and registered ModTheGungeon items. Incompatible clients are
+rejected with the first detected manifest difference.
+
+Version 0.5 adds host-authoritative enemy projectiles, exact projectile matching
+for multi-shot/charged guns, beam synchronization, and a locked run roster. New
+players may join in the foyer; after the run starts, only a disconnected member
+of that run may reconnect.
 
 > [!WARNING]
 > _THIS MOD IS STILL VERY EARLY IN DEVELOPMENT - DO NOT EXPECT A FUNCTIONAL EXPERIENCE RIGHT NOW_
@@ -34,7 +49,9 @@ My paypal is llamerrr1@gmail.com if you actually want to (for some reason)
 | Steam P2P networking | 🟨 Working | Real connections and Steam invites working |
 | Basic UI | 🟨 Working | Modern multiplayer menu (Ctrl+P) available |
 | Player Synchronization | 🟨 Working | Basic position and animation sync implemented, development ongoing |
-| Enemy Synchronization | 🟥 Planned | Basic hooks into gameobjects |
+| Enemy Synchronization | 🟨 Working | Host-driven transforms, health, AI state and enemy projectiles |
+| Weapon Synchronization | 🟨 Working | Regular, multi-shot, charged projectile and beam replication |
+| Reconnection | 🟨 Working | Run roster locks after leaving the foyer; prior members can reconnect |
 | Dungeon Synchronization | 🟥 Planned | Save and load system working |
 | Singleplayer | 🏁 Finished | Yippeeee!!!!! |
 

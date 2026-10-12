@@ -12,7 +12,7 @@ namespace GungeonTogether.Networking.Packets
         public int EnemyId;
         public Vector2 Position;
         public float Rotation;
-        public int Health;
+        public float Health;
         public int AIState;
 
         public void Serialize(BinaryWriter writer)
@@ -30,7 +30,7 @@ namespace GungeonTogether.Networking.Packets
             EnemyId = reader.ReadInt32();
             Position = new Vector2(reader.ReadSingle(), reader.ReadSingle());
             Rotation = reader.ReadSingle();
-            Health = reader.ReadInt32();
+            Health = reader.ReadSingle();
             AIState = reader.ReadInt32();
         }
     }

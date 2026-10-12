@@ -21,6 +21,10 @@ namespace GungeonTogether.Networking
         private static MethodInfo _goToFoyerMethod;
         private static MethodInfo _loadFloorMethod;
         private static PropertyInfo _primaryPlayerProperty;
+        private static PropertyInfo _currentRunSeedProperty;
+        private static MethodInfo _getLastLoadedLevelDefinitionMethod;
+        private static MethodInfo _loadCustomLevelMethod;
+        private static FieldInfo _customFloorsField;
 
         // RoomHandler
         private static FieldInfo _activeEnemiesField;
@@ -59,7 +63,7 @@ namespace GungeonTogether.Networking
 
                 _gameManagerType = _gameAssembly.GetType("GameManager");
                 _roomHandlerType = _gameAssembly.GetType("RoomHandler");
-                _enemyControllerType = _gameAssembly.GetType("EnemyController");
+                _enemyControllerType = _gameAssembly.GetType("AIActor");
 
                 if (_gameManagerType != null)
                 {
@@ -77,13 +81,17 @@ namespace GungeonTogether.Networking
                     _currentRoomHandlerProperty = _gameManagerType.GetProperty("CurrentRoomHandler", BindingFlags.Public | BindingFlags.Instance);
                     _isFoyerProperty = _gameManagerType.GetProperty("IsFoyer", BindingFlags.Public | BindingFlags.Instance);
                     _goToFoyerMethod = _gameManagerType.GetMethod("GoToFoyer", BindingFlags.Public | BindingFlags.Instance);
-                    _loadFloorMethod = _gameManagerType.GetMethod("LoadFloor", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(int) }, null);
+                    _loadFloorMethod = _gameManagerType.GetMethod("LoadLevelByIndex", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(int) }, null);
                     _primaryPlayerProperty = _gameManagerType.GetProperty("PrimaryPlayer", BindingFlags.Public | BindingFlags.Instance);
+                    _currentRunSeedProperty = _gameManagerType.GetProperty("CurrentRunSeed", BindingFlags.Public | BindingFlags.Instance);
+                    _getLastLoadedLevelDefinitionMethod = _gameManagerType.GetMethod("GetLastLoadedLevelDefinition", BindingFlags.Public | BindingFlags.Instance);
+                    _loadCustomLevelMethod = _gameManagerType.GetMethod("LoadCustomLevel", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(string) }, null);
+                    _customFloorsField = _gameManagerType.GetField("customFloors", BindingFlags.Public | BindingFlags.Instance);
                 }
 
                 if (_roomHandlerType != null)
                 {
-                    _activeEnemiesField = _roomHandlerType.GetField("activeEnemies", BindingFlags.Public | BindingFlags.Instance);
+                    _activeEnemiesField = _roomHandlerType.GetField("activeEnemies", BindingFlags.NonPublic | BindingFlags.Instance);
                 }
 
                 if (_enemyControllerType != null)
@@ -154,6 +162,7 @@ namespace GungeonTogether.Networking
                 var floor = _currentFloorProperty.GetValue(gm, null);
                 if (floor != null)
                 {
+                    if (floor is int) return (int)floor;
                     var idxProp = floor.GetType().GetProperty("Index", BindingFlags.Public | BindingFlags.Instance);
                     if (idxProp != null) return (int)idxProp.GetValue(floor, null);
                     // Try name
@@ -166,25 +175,82 @@ namespace GungeonTogether.Networking
 
         public static string GetCurrentRoomIdentifier()
         {
-            var gm = GetGameManager();
-            if (gm == null) return "";
-            if (_currentRoomHandlerProperty != null)
+            var room = GetCurrentRoomHandler();
+            if (room != null)
             {
-                var room = _currentRoomHandlerProperty.GetValue(gm, null);
-                if (room != null)
+                var handler = room as Dungeonator.RoomHandler;
+                if (handler != null)
+                    return handler.GetRoomName() + "@" + handler.area.basePosition.x + "," + handler.area.basePosition.y;
+
+                var getName = room.GetType().GetMethod("GetRoomName", BindingFlags.Public | BindingFlags.Instance);
+                if (getName != null)
                 {
-                    // RoomHandler might have a name or unique ID
-                    var nameProp = room.GetType().GetProperty("RoomName", BindingFlags.Public | BindingFlags.Instance);
-                    if (nameProp != null)
-                    {
-                        var val = nameProp.GetValue(room, null);
-                        if (val != null) return val.ToString();
-                    }
-                    // Fallback: use GetHashCode
-                    return room.GetHashCode().ToString();
+                    var value = getName.Invoke(room, null);
+                    if (value != null) return value.ToString();
                 }
+                return room.GetHashCode().ToString();
             }
             return "";
+        }
+
+        public static int GetCurrentRunSeed()
+        {
+            var gm = GetGameManager();
+            if (gm == null || _currentRunSeedProperty == null) return 0;
+            object value = _currentRunSeedProperty.GetValue(gm, null);
+            return value != null ? Convert.ToInt32(value) : 0;
+        }
+
+        public static void SetCurrentRunSeed(int seed)
+        {
+            var gm = GetGameManager();
+            if (gm == null || _currentRunSeedProperty == null || !_currentRunSeedProperty.CanWrite) return;
+            _currentRunSeedProperty.SetValue(gm, seed, null);
+        }
+
+        public static string GetCurrentLevelName()
+        {
+            var gm = GetGameManager();
+            if (gm != null && _getLastLoadedLevelDefinitionMethod != null)
+            {
+                object definition = _getLastLoadedLevelDefinitionMethod.Invoke(gm, null);
+                if (definition != null)
+                {
+                    FieldInfo nameField = definition.GetType().GetField("dungeonSceneName", BindingFlags.Public | BindingFlags.Instance);
+                    object value = nameField != null ? nameField.GetValue(definition) : null;
+                    if (value != null) return value.ToString();
+                }
+            }
+            return UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? "";
+        }
+
+        public static void TeleportToLevel(string levelName, int floorIndex)
+        {
+            var gm = GetGameManager();
+            bool isCustom = false;
+            if (gm != null && _customFloorsField != null && !string.IsNullOrEmpty(levelName))
+            {
+                var floors = _customFloorsField.GetValue(gm) as System.Collections.IEnumerable;
+                if (floors != null)
+                {
+                    foreach (object definition in floors)
+                    {
+                        if (definition == null) continue;
+                        FieldInfo nameField = definition.GetType().GetField("dungeonSceneName", BindingFlags.Public | BindingFlags.Instance);
+                        string name = nameField != null ? nameField.GetValue(definition) as string : null;
+                        if (string.Equals(name, levelName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            isCustom = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (isCustom && _loadCustomLevelMethod != null)
+                _loadCustomLevelMethod.Invoke(gm, new object[] { levelName });
+            else
+                TeleportToFloor(floorIndex);
         }
 
         public static Vector3 GetPlayerPosition()
@@ -268,6 +334,13 @@ namespace GungeonTogether.Networking
 
         public static object GetCurrentRoomHandler()
         {
+            object player = GetPrimaryPlayer();
+            if (player != null)
+            {
+                PropertyInfo roomProperty = player.GetType().GetProperty("CurrentRoom", BindingFlags.Public | BindingFlags.Instance);
+                if (roomProperty != null) return roomProperty.GetValue(player, null);
+            }
+
             var gm = GetGameManager();
             if (gm == null || _currentRoomHandlerProperty == null) return null;
             return _currentRoomHandlerProperty.GetValue(gm, null);
@@ -278,26 +351,30 @@ namespace GungeonTogether.Networking
             if (!_initialised || _activeEnemiesField == null) return new List<object>();
             var room = GetCurrentRoomHandler();
             if (room == null) return new List<object>();
-            return _activeEnemiesField.GetValue(room) as List<object> ?? new List<object>();
+            var result = new List<object>();
+            var enemies = _activeEnemiesField.GetValue(room) as System.Collections.IEnumerable;
+            if (enemies == null) return result;
+            foreach (object enemy in enemies)
+                if (enemy != null) result.Add(enemy);
+            return result;
         }
 
-        public static int GetEnemyHealth(object enemy)
+        public static float GetEnemyHealth(object enemy)
         {
-            if (!_initialised || _healthProperty == null || enemy == null) return 0;
-            return (int)_healthProperty.GetValue(enemy, null);
+            var actor = enemy as AIActor;
+            return actor != null && actor.healthHaver != null ? actor.healthHaver.GetCurrentHealth() : 0f;
         }
 
         public static int GetEnemyAIState(object enemy)
         {
-            if (!_initialised || _aiStateField == null || enemy == null) return 0;
-            object val = _aiStateField.GetValue(enemy);
-            return val != null ? (int)val : 0;
+            var actor = enemy as AIActor;
+            return actor != null ? (int)actor.State : 0;
         }
 
         public static bool IsEnemyDead(object enemy)
         {
-            if (!_initialised || _isDeadField == null || enemy == null) return false;
-            return (bool)_isDeadField.GetValue(enemy);
+            var actor = enemy as AIActor;
+            return actor != null && actor.healthHaver != null && actor.healthHaver.IsDead;
         }
 
         public static Vector3 GetEnemyPosition(object enemy)
@@ -325,10 +402,22 @@ namespace GungeonTogether.Networking
             return null;
         }
 
-        public static float GetPlayerHealth() => GetFloatProperty(GetPrimaryPlayer(), _healthProperty);
-        public static float GetPlayerMaxHealth() => GetFloatProperty(GetPrimaryPlayer(), _maxHealthProperty);
-        public static float GetPlayerArmor() => GetFloatProperty(GetPrimaryPlayer(), _armorProperty);
-        public static float GetPlayerMaxArmor() => GetFloatProperty(GetPrimaryPlayer(), _maxArmorProperty);
+        public static float GetPlayerHealth()
+        {
+            var player = GetPrimaryPlayer() as PlayerController;
+            return player != null && player.healthHaver != null ? player.healthHaver.GetCurrentHealth() : 0f;
+        }
+        public static float GetPlayerMaxHealth()
+        {
+            var player = GetPrimaryPlayer() as PlayerController;
+            return player != null && player.healthHaver != null ? player.healthHaver.GetMaxHealth() : 0f;
+        }
+        public static float GetPlayerArmor()
+        {
+            var player = GetPrimaryPlayer() as PlayerController;
+            return player != null && player.healthHaver != null ? player.healthHaver.Armor : 0f;
+        }
+        public static float GetPlayerMaxArmor() => GetPlayerArmor();
         public static int GetPlayerCurrentGunIndex()
         {
             var player = GetPrimaryPlayer();

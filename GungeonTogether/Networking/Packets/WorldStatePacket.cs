@@ -11,6 +11,8 @@ namespace GungeonTogether.Networking.Packets
 
         public bool IsFoyer;
         public int FloorIndex;          // -1 if foyer
+        public int RunSeed;
+        public string LevelName;
         public string RoomIdentifier;   // room name or unique ID
         public Vector2 Position;
         public float Rotation;
@@ -19,6 +21,8 @@ namespace GungeonTogether.Networking.Packets
         {
             writer.Write(IsFoyer);
             writer.Write(FloorIndex);
+            writer.Write(RunSeed);
+            writer.Write(LevelName ?? "");
             writer.Write(RoomIdentifier ?? "");
             writer.Write(Position.x);
             writer.Write(Position.y);
@@ -29,6 +33,8 @@ namespace GungeonTogether.Networking.Packets
         {
             IsFoyer = reader.ReadBoolean();
             FloorIndex = reader.ReadInt32();
+            RunSeed = reader.ReadInt32();
+            LevelName = reader.ReadString();
             RoomIdentifier = reader.ReadString();
             Position = new Vector2(reader.ReadSingle(), reader.ReadSingle());
             Rotation = reader.ReadSingle();

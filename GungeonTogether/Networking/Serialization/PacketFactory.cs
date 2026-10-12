@@ -24,6 +24,14 @@ namespace GungeonTogether.Networking.Serialization
             { PacketType.WorldState, typeof(WorldStatePacket) },
             { PacketType.PlayerState, typeof(PlayerStatePacket) },
             { PacketType.LoadingState, typeof(LoadingStatePacket) },
+            { PacketType.ProjectileFired, typeof(ProjectileFiredPacket) },
+            { PacketType.ItemPickup, typeof(ItemPickupPacket) },
+            { PacketType.PlayerVitals, typeof(PlayerVitalsPacket) },
+            { PacketType.PlayerRevive, typeof(PlayerRevivePacket) },
+            { PacketType.EnemyProjectileSpawn, typeof(EnemyProjectileSpawnPacket) },
+            { PacketType.EnemyProjectileState, typeof(EnemyProjectileStatePacket) },
+            { PacketType.EnemyProjectileDestroy, typeof(EnemyProjectileDestroyPacket) },
+            { PacketType.PlayerBeamState, typeof(PlayerBeamStatePacket) },
         };
 
         public static INetworkPacket Create(PacketType type)

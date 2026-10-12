@@ -13,7 +13,7 @@ namespace GungeonTogether.Networking.Packets
         public string PrefabName;
         public Vector2 Position;
         public float Rotation;
-        public int Health;
+        public float Health;
 
         public void Serialize(BinaryWriter writer)
         {
@@ -31,7 +31,7 @@ namespace GungeonTogether.Networking.Packets
             PrefabName = reader.ReadString();
             Position = new Vector2(reader.ReadSingle(), reader.ReadSingle());
             Rotation = reader.ReadSingle();
-            Health = reader.ReadInt32();
+            Health = reader.ReadSingle();
         }
     }
 }

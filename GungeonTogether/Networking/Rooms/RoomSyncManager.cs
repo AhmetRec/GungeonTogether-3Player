@@ -3,6 +3,7 @@ using UnityEngine;
 using GungeonTogether.Networking;
 using GungeonTogether.Networking.Steam;
 using GungeonTogether.Networking.Packets;
+using GungeonTogether.Networking.Sync;
 using Dungeonator;
 
 public class RoomSyncManager : MonoBehaviour
@@ -12,7 +13,9 @@ public class RoomSyncManager : MonoBehaviour
 
     private string _currentRoomName = "";
     private float _lastSyncTime = 0f;
+    private float _lastSpawnRefreshTime = 0f;
     private const float SYNC_INTERVAL = 0.2f;
+    private const float SPAWN_REFRESH_INTERVAL = 2f;
 
     private void Awake() { DontDestroyOnLoad(gameObject); }
 
@@ -43,11 +46,14 @@ public class RoomSyncManager : MonoBehaviour
         var roomHandler = room as RoomHandler;
         if (roomHandler == null) return;
 
-        string roomName = roomHandler.GetRoomName();
+        string roomName = roomHandler.GetRoomName() + "@" + roomHandler.area.basePosition.x + "," + roomHandler.area.basePosition.y;
 
         if (roomName != _currentRoomName)
         {
             _currentRoomName = roomName;
+            _enemyIdMap.Clear();
+            EnemyProjectileSyncManager.Instance.Clear();
+            NetworkEntityManager.Instance.Clear();
             // Broadcast RoomChangePacket
             NetworkManager.Instance.Host.Broadcast(new RoomChangePacket { RoomName = roomName });
 
@@ -75,8 +81,10 @@ public class RoomSyncManager : MonoBehaviour
             int id = GetOrAssignEnemyId(enemyComponent);
             Vector3 pos = enemyComponent.transform.position;
             float rot = enemyComponent.transform.eulerAngles.z;
-            int health = ETGReflectionHelper.GetEnemyHealth(enemyComponent);
-            string prefabName = enemyComponent.name; // or a more robust type identifier
+            float health = ETGReflectionHelper.GetEnemyHealth(enemyComponent);
+            AIActor actor = enemyComponent as AIActor;
+            if (actor != null) EnemyProjectileSyncManager.Instance.TrackHostEnemy(id, actor);
+            string prefabName = actor != null ? actor.EnemyGuid : enemyComponent.name;
 
             var packet = new EnemySpawnPacket
             {
@@ -92,17 +100,34 @@ public class RoomSyncManager : MonoBehaviour
 
     private void SyncEnemyStates()
     {
+        bool refreshSpawns = Time.time - _lastSpawnRefreshTime > SPAWN_REFRESH_INTERVAL;
+        if (refreshSpawns) _lastSpawnRefreshTime = Time.time;
         var enemies = ETGReflectionHelper.GetActiveEnemies();
         foreach (var enemy in enemies)
         {
             var enemyComponent = enemy as Component;
             if (enemyComponent == null) continue;
 
+            bool isNewEnemy = !_enemyIdMap.ContainsKey(enemyComponent);
             int id = GetOrAssignEnemyId(enemyComponent);
             Vector3 pos = enemyComponent.transform.position;
             float rot = enemyComponent.transform.eulerAngles.z;
-            int health = ETGReflectionHelper.GetEnemyHealth(enemyComponent);
-            int aiState = GetEnemyAIState(enemyComponent); // implement reflection
+            float health = ETGReflectionHelper.GetEnemyHealth(enemyComponent);
+            int aiState = ETGReflectionHelper.GetEnemyAIState(enemyComponent);
+
+            if (isNewEnemy || refreshSpawns)
+            {
+                AIActor actor = enemyComponent as AIActor;
+                if (actor != null) EnemyProjectileSyncManager.Instance.TrackHostEnemy(id, actor);
+                NetworkManager.Instance.Host.Broadcast(new EnemySpawnPacket
+                {
+                    EnemyId = id,
+                    PrefabName = actor != null ? actor.EnemyGuid : enemyComponent.name,
+                    Position = new Vector2(pos.x, pos.y),
+                    Rotation = rot,
+                    Health = health
+                }, reliable: true);
+            }
 
             var packet = new EnemyStatePacket
             {
@@ -114,6 +139,39 @@ public class RoomSyncManager : MonoBehaviour
             };
             NetworkManager.Instance.Host.Broadcast(packet, reliable: false);
         }
+
+        var dead = new List<Component>();
+        foreach (var pair in _enemyIdMap)
+        {
+            AIActor actor = pair.Key as AIActor;
+            if (pair.Key == null || (actor != null && actor.healthHaver != null && actor.healthHaver.IsDead))
+            {
+                NetworkManager.Instance.Host.Broadcast(new EnemyDeathPacket { EnemyId = pair.Value }, reliable: true);
+                dead.Add(pair.Key);
+            }
+        }
+        foreach (Component enemy in dead) _enemyIdMap.Remove(enemy);
+    }
+
+    public void SendSnapshotTo(ulong targetId)
+    {
+        if (!NetworkManager.Instance.IsHost || NetworkManager.Instance.Host == null) return;
+        foreach (var enemy in ETGReflectionHelper.GetActiveEnemies())
+        {
+            Component component = enemy as Component;
+            AIActor actor = component as AIActor;
+            if (component == null || actor == null) continue;
+            int id = GetOrAssignEnemyId(component);
+            EnemyProjectileSyncManager.Instance.TrackHostEnemy(id, actor);
+            NetworkManager.Instance.Host.SendPacket(targetId, new EnemySpawnPacket
+            {
+                EnemyId = id,
+                PrefabName = actor.EnemyGuid,
+                Position = component.transform.position,
+                Rotation = component.transform.eulerAngles.z,
+                Health = ETGReflectionHelper.GetEnemyHealth(component)
+            }, reliable: true);
+        }
     }
 
     private Dictionary<Component, int> _enemyIdMap = new Dictionary<Component, int>();
@@ -124,12 +182,6 @@ public class RoomSyncManager : MonoBehaviour
         id = NetworkEntityManager.Instance.AssignId(enemy);
         _enemyIdMap[enemy] = id;
         return id;
-    }
-
-    private int GetEnemyAIState(object enemy)
-    {
-        // Use reflection to get AI state (e.g., EnemyController.m_aiState)
-        return 0; // placeholder
     }
 
     // Client side: handle packets via NetworkManager

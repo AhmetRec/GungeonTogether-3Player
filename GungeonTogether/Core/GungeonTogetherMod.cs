@@ -7,7 +7,7 @@ using GungeonTogether.Networking.Sync;
 
 namespace GungeonTogether.Core
 {
-    [BepInPlugin("com.llamerrr.gungeontogether", "Gungeon Together", "1.0.0")]
+    [BepInPlugin("com.llamerrr.gungeontogether", "Gungeon Together", "0.5.0")]
     [BepInDependency("etgmodding.etg.mtgapi")]
     public class GungeonTogetherMod : BaseUnityPlugin
     {
@@ -32,7 +32,8 @@ namespace GungeonTogether.Core
                 //initialise room sync
                 RoomSyncManager.Instance.gameObject.SetActive(true);
                 WorldSyncManager.Instance.gameObject.SetActive(true);
-                PlayerSyncManager.Instance.gameObject.SetActive(true);
+                GameplaySyncManager.Instance.gameObject.SetActive(true);
+                EnemyProjectileSyncManager.Instance.gameObject.SetActive(true);
                 LoadingSyncManager.Instance.gameObject.SetActive(true);           
 
                 Logger.LogInfo("Gungeon Together ready.");
