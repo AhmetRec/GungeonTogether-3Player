@@ -101,7 +101,11 @@ namespace GungeonTogether.Networking.Steam
             if (createMethod.GetParameters().Length == 1)
                 callbackObj = createMethod.Invoke(null, new object[] { del });
             else
-                callbackObj = createMethod.Invoke(null, new object[] { del, true });
+                // The bool selects the game-server callback pipe. Gungeon is a
+                // Steam client, so registering with true silently prevents lobby
+                // invite callbacks from reaching us on affected Steamworks.NET
+                // versions.
+                callbackObj = createMethod.Invoke(null, new object[] { del, false });
 
             if (callbackObj != null)
             {

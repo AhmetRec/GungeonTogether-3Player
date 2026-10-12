@@ -46,6 +46,8 @@ namespace GungeonTogether.Networking.Steam
         private object _lobbyCreatedCb;
         private object _lobbyEnterCb;
         private object _richPresenceJoinRequestedCb;
+        private ulong _pendingLobbyId;
+        private ulong _joiningLobbyId;
 
         public SteamLobbyManager()
         {
@@ -78,6 +80,12 @@ namespace GungeonTogether.Networking.Steam
 
             HookCallbacks();   // <-- hook immediately, as before
 
+            // If Steam launched the game by accepting an invite, the lobby is
+            // delivered as a command-line argument instead of a callback.
+            _pendingLobbyId = ReadLobbyIdFromCommandLine();
+            if (_pendingLobbyId != 0)
+                Debug.Log("[SteamLobby] Queued startup lobby " + _pendingLobbyId + " from command line");
+
             IsInitialised = true;
             Debug.Log("[SteamLobby] Initialised");
         }
@@ -94,6 +102,13 @@ namespace GungeonTogether.Networking.Steam
                 }
                 
                 _runCallbacksMethod.Invoke(null, null);
+
+                if (_pendingLobbyId != 0)
+                {
+                    ulong lobbyId = _pendingLobbyId;
+                    _pendingLobbyId = 0;
+                    JoinLobby(lobbyId);
+                }
             }
             catch (Exception e)
             {
@@ -128,6 +143,12 @@ namespace GungeonTogether.Networking.Steam
         public void JoinLobby(ulong lobbyId)
         {
             if (!IsInitialised) return;
+            if (lobbyId == 0) return;
+            if ((IsInLobby && CurrentLobbyId == lobbyId) || _joiningLobbyId == lobbyId)
+            {
+                Debug.Log("[SteamLobby] Already in or joining lobby " + lobbyId);
+                return;
+            }
             if (SteamReflectionHelper.JoinLobbyMethod == null)
             {
                 Debug.LogWarning("[SteamLobby] JoinLobby not available");
@@ -140,6 +161,7 @@ namespace GungeonTogether.Networking.Steam
 
                 object lobbySteamId = SteamReflectionHelper.CreateCSteamID(lobbyId);
                 SteamReflectionHelper.JoinLobbyMethod.Invoke(null, new object[] { lobbySteamId });
+                _joiningLobbyId = lobbyId;
                 Debug.Log("[SteamLobby] Joining lobby " + lobbyId + "...");
             }
             catch (Exception e)
@@ -168,6 +190,7 @@ namespace GungeonTogether.Networking.Steam
 
             IsInLobby = false;
             CurrentLobbyId = 0;
+            _joiningLobbyId = 0;
             Debug.Log("[SteamLobby] Left lobby.");
         }
 
@@ -330,9 +353,13 @@ namespace GungeonTogether.Networking.Steam
 
                     if (SteamReflectionHelper.SetRichPresenceMethod != null)
                     {
-                        // Common pattern: Rich presence key "connect" set to lobby id
-                        SteamReflectionHelper.SetRichPresenceMethod.Invoke(null, new object[] { "connect", lobbyId.ToString() });
-                        Debug.Log("[SteamLobby] Rich presence set to connect=" + lobbyId.ToString());
+                        // Steam uses this string as the game's launch arguments
+                        // when an invite is accepted while the game is closed.
+                        string connectCommand = "+connect_lobby " + lobbyId;
+                        SteamReflectionHelper.SetRichPresenceMethod.Invoke(null, new object[] { "connect", connectCommand });
+                        SteamReflectionHelper.SetRichPresenceMethod.Invoke(null, new object[] { "steam_player_group", lobbyId.ToString() });
+                        SteamReflectionHelper.SetRichPresenceMethod.Invoke(null, new object[] { "steam_player_group_size", "1" });
+                        Debug.Log("[SteamLobby] Rich presence set to connect=" + connectCommand);
                     }
                     else
                     {
@@ -378,7 +405,7 @@ namespace GungeonTogether.Networking.Steam
                 Debug.Log($"[SteamLobby] Extracted lobby: {lobbyId}, friend: {friendId}");
 
                 if (lobbyId != 0)
-                    JoinLobby(lobbyId);
+                    QueueLobbyJoin(lobbyId, "GameLobbyJoinRequested");
                 else
                     Debug.LogWarning("[SteamLobby] GameLobbyJoinRequested had null lobby ID");
             }
@@ -396,8 +423,17 @@ namespace GungeonTogether.Networking.Steam
                 ulong lobbyId = ReadUlongField(callbackData, "m_ulSteamIDLobby", "m_SteamIDLobby", "m_ulSteamIDLobbyID");
                 if (lobbyId == 0) return;
 
+                uint enterResponse = ReadUIntField(callbackData, "m_EChatRoomEnterResponse", "m_eChatRoomEnterResponse");
+                if (enterResponse != 0 && enterResponse != 1)
+                {
+                    _joiningLobbyId = 0;
+                    Debug.LogWarning("[SteamLobby] Lobby entry rejected for " + lobbyId + " response=" + enterResponse);
+                    return;
+                }
+
                 CurrentLobbyId = lobbyId;
                 IsInLobby = true;
+                _joiningLobbyId = 0;
                 EnableP2PPacketRelay("entered lobby");
 
                 ulong ownerId = 0;
@@ -419,6 +455,8 @@ namespace GungeonTogether.Networking.Steam
                 {
                     Networking.NetworkManager.Instance.ConnectTo(ownerId);
                 }
+
+                UpdatePlayerList();
             }
             catch (Exception e)
             {
@@ -448,7 +486,7 @@ namespace GungeonTogether.Networking.Steam
                 if (TryExtractFirstUlong(connect, out lobbyId) && lobbyId != 0)
                 {
                     Debug.Log("[SteamLobby] Join requested via rich presence. Extracted lobby id: " + lobbyId);
-                    JoinLobby(lobbyId);
+                    QueueLobbyJoin(lobbyId, "rich presence");
                 }
                 else
                 {
@@ -476,6 +514,69 @@ namespace GungeonTogether.Networking.Steam
             {
                 return null;
             }
+        }
+
+        private void QueueLobbyJoin(ulong lobbyId, string source)
+        {
+            if (lobbyId == 0) return;
+            _pendingLobbyId = lobbyId;
+            Debug.Log("[SteamLobby] Queued lobby " + lobbyId + " from " + source);
+        }
+
+        private static ulong ReadLobbyIdFromCommandLine()
+        {
+            try
+            {
+                string[] args = Environment.GetCommandLineArgs();
+                for (int i = 1; i < args.Length; i++)
+                {
+                    string arg = (args[i] ?? string.Empty).Trim().Trim('"');
+                    if (string.Equals(arg, "+connect_lobby", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(arg, "connect_lobby", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(arg, "--connect-lobby", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(arg, "+connect", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (i + 1 < args.Length && TryExtractFirstUlong(args[i + 1], out ulong markedLobby))
+                            return markedLobby;
+                    }
+
+                    if (arg.StartsWith("gt_lobby=", StringComparison.OrdinalIgnoreCase) &&
+                        TryExtractFirstUlong(arg, out ulong namedLobby))
+                        return namedLobby;
+
+                    if (arg.IndexOf("joinlobby", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                        TryExtractLobbyFromJoinUri(arg, out ulong uriLobby))
+                        return uriLobby;
+                }
+
+                // Compatibility with 0.5.1, which advertised only the numeric
+                // lobby id as its rich-presence connect string.
+                for (int i = 1; i < args.Length; i++)
+                {
+                    string arg = (args[i] ?? string.Empty).Trim().Trim('"');
+                    if (arg.Length >= 15 && ulong.TryParse(arg, out ulong legacyLobby))
+                        return legacyLobby;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[SteamLobby] Could not read startup invite: " + e.Message);
+            }
+            return 0;
+        }
+
+        private static bool TryExtractLobbyFromJoinUri(string value, out ulong lobbyId)
+        {
+            lobbyId = 0;
+            if (string.IsNullOrEmpty(value)) return false;
+            string[] parts = value.Replace('\\', '/').Split('/');
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (!string.Equals(parts[i], "joinlobby", StringComparison.OrdinalIgnoreCase)) continue;
+                // steam://joinlobby/<appid>/<lobbyid>/<friendid>
+                return i + 2 < parts.Length && ulong.TryParse(parts[i + 2], out lobbyId);
+            }
+            return false;
         }
 
         private void EnableP2PPacketRelay(string reason)
