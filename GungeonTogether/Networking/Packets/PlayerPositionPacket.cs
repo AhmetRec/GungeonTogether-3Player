@@ -21,6 +21,7 @@ namespace GungeonTogether.Networking.Packets
         public int SpriteId;
         public string SpriteCollectionName;
         public bool FlipX;
+        public string CharacterPrefabKey;
 
         public void Serialize(BinaryWriter writer)
         {
@@ -38,6 +39,7 @@ namespace GungeonTogether.Networking.Packets
             writer.Write(SpriteId);
             writer.Write(SpriteCollectionName ?? "");
             writer.Write(FlipX);
+            writer.Write(CharacterPrefabKey ?? "");
         }
 
         public void Deserialize(BinaryReader reader)
@@ -54,6 +56,7 @@ namespace GungeonTogether.Networking.Packets
             SpriteId = reader.ReadInt32();
             SpriteCollectionName = reader.ReadString();
             FlipX = reader.ReadBoolean();
+            CharacterPrefabKey = reader.ReadString();
         }
     }
 }

@@ -149,11 +149,12 @@ namespace GungeonTogether.Networking.Sync
                 projectile.Direction = packet.Direction.normalized;
                 projectile.Speed = packet.Speed;
 
-                var localPlayer = ETGReflectionHelper.GetPrimaryPlayer() as PlayerController;
-                if (localPlayer != null)
+                PlayerController owner = PlayerManager.Instance.GetRemotePlayerController(packet.PlayerId);
+                if (owner == null) owner = ETGReflectionHelper.GetPrimaryPlayer() as PlayerController;
+                if (owner != null)
                 {
-                    projectile.Owner = localPlayer;
-                    projectile.Shooter = localPlayer.specRigidbody;
+                    projectile.Owner = owner;
+                    projectile.Shooter = owner.specRigidbody;
                 }
 
                 if (projectile.baseData != null)
@@ -243,7 +244,8 @@ namespace GungeonTogether.Networking.Sync
             {
                 Gun gun = ModCompatibility.ResolvePickup(packet.GunKey, packet.GunId) as Gun;
                 Projectile prefab = ResolveProjectile(gun, packet.ProjectileName);
-                PlayerController owner = ETGReflectionHelper.GetPrimaryPlayer() as PlayerController;
+                PlayerController owner = PlayerManager.Instance.GetRemotePlayerController(packet.PlayerId);
+                if (owner == null) owner = ETGReflectionHelper.GetPrimaryPlayer() as PlayerController;
                 if (prefab == null || owner == null) return;
 
                 float angle = Mathf.Atan2(packet.Direction.y, packet.Direction.x) * Mathf.Rad2Deg;
@@ -351,14 +353,40 @@ namespace GungeonTogether.Networking.Sync
                 }
             }
 
-            if (best != null)
+            if (best == null) return;
+
+            PlayerController remote = PlayerManager.Instance.GetRemotePlayerController(packet.PlayerId);
+            if (remote == null)
+            {
                 UnityEngine.Object.Destroy(best.gameObject);
+                return;
+            }
+
+            // Give the proxy the item as well as removing the world pickup. This
+            // keeps its inventory, gun renderer, passive effects and co-op state
+            // in line with the owning machine. The pickup Harmony hook ignores
+            // non-primary players, so this cannot echo back over the network.
+            try
+            {
+                Gun gun = best as Gun;
+                PassiveItem passive = best as PassiveItem;
+                PlayerItem active = best as PlayerItem;
+                if (gun != null) gun.Pickup(remote);
+                else if (passive != null) passive.Pickup(remote);
+                else if (active != null) active.Pickup(remote);
+                else UnityEngine.Object.Destroy(best.gameObject);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[GameplaySync] Could not apply remote pickup to PlayerController: " + e.Message);
+                if (best != null) UnityEngine.Object.Destroy(best.gameObject);
+            }
         }
 
         public void RecordVitals(PlayerVitalsPacket packet)
         {
             _vitals[packet.PlayerId] = packet;
-            PlayerManager.Instance.SetRemotePlayerDowned(packet.PlayerId, packet.IsDowned);
+            PlayerManager.Instance.SetRemotePlayerDowned(packet.PlayerId, packet.IsDowned, packet.Health, packet.Armor);
         }
 
         public void RemovePlayer(ulong playerId)
@@ -518,6 +546,9 @@ namespace GungeonTogether.Networking.Sync
 
         private static bool DeathPrefix(PlayerController __instance)
         {
+            // A proxy's owner is authoritative for its death/downed state.
+            // Environmental callbacks on another peer must not kill the proxy.
+            if (PlayerManager.Instance.IsRemotePlayer(__instance)) return false;
             return _instance == null || !_instance.TryEnterDowned(__instance);
         }
     }

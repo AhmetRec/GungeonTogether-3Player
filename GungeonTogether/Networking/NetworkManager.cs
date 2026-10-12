@@ -31,9 +31,9 @@ namespace GungeonTogether.Networking
         private SteamP2PManager _p2p;
         private SteamLobbyManager _lobby;
 
-        // Protocol v2 adds explicit three-player session capacity and richer
-        // connection rejection packets. Older builds must not join these lobbies.
-        public const int ProtocolVersion = 6;
+        // Protocol v7 replaces visual-only avatars with real network-controlled
+        // PlayerControllers and adds the character prefab identity to movement.
+        public const int ProtocolVersion = 7;
         public const int MaxPlayers = 3;
         public const int MaxClients = MaxPlayers - 1;
 
@@ -165,7 +165,7 @@ namespace GungeonTogether.Networking
                     var posPacket = (PlayerPositionPacket)packet;
                     if (IsClient && posPacket.PlayerId != SteamReflectionHelper.GetLocalSteamId())
                     {
-                        PlayerManager.Instance.UpdateRemotePlayer(posPacket.PlayerId, posPacket.Position, posPacket.Velocity, posPacket.Rotation, posPacket.FlipX, posPacket.Sequence, posPacket.SpriteId, posPacket.SpriteCollectionName, posPacket.IsDodgeRolling);
+                        PlayerManager.Instance.UpdateRemotePlayer(posPacket.PlayerId, posPacket.Position, posPacket.Velocity, posPacket.Rotation, posPacket.FlipX, posPacket.Sequence, posPacket.SpriteId, posPacket.SpriteCollectionName, posPacket.IsDodgeRolling, posPacket.CharacterPrefabKey);
                     }
                     else if (IsHost)
                     {

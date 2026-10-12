@@ -12,7 +12,12 @@ Modded sessions are supported when every player uses the same BepInEx plugins,
 plugin versions and registered ModTheGungeon items. Incompatible clients are
 rejected with the first detected manifest difference.
 
-Version 0.6 adds persistent remote players across scene changes, smoother 20 Hz
+Version 0.7 replaces visual-only remote sprites with network-controlled real
+`PlayerController` instances. Remote players now participate in the built-in
+co-op camera, collision, room, enemy targeting, inventory and floor-transition
+systems. It also fixes the lobby player-list construction error, makes the
+connection handshake idempotent and removes per-second packet-poll log spam.
+Version 0.6 added persistent remote players across scene changes, smoother 20 Hz
 player snapshots, stable host-driven floor transitions, exact modded pickup
 identity matching, and safer gameplay patches. Version 0.5 added host-authoritative
 enemy projectiles, exact projectile matching for multi-shot/charged guns, beam synchronization, and a locked run roster. New
@@ -50,7 +55,8 @@ My paypal is llamerrr1@gmail.com if you actually want to (for some reason)
 | Steam invites/lobby system | 🟩 Done | Steam lobby creation and joining functional |
 | Steam P2P networking | 🟨 Working | Real connections and Steam invites working |
 | Basic UI | 🟨 Working | Modern multiplayer menu (Ctrl+P) available |
-| Player Synchronization | 🟨 Working | Basic position and animation sync implemented, development ongoing |
+| Player Synchronization | 🟨 Working | Real remote PlayerControllers with 20 Hz movement and animation sync |
+| Three-player co-op | 🟨 Working | All three players join gameplay; extra remotes safely share the native P2 co-op HUD slot |
 | Enemy Synchronization | 🟨 Working | Host-driven transforms, health, AI state and enemy projectiles |
 | Weapon Synchronization | 🟨 Working | Regular, multi-shot, charged projectile and beam replication |
 | Reconnection | 🟨 Working | Run roster locks after leaving the foyer; prior members can reconnect |

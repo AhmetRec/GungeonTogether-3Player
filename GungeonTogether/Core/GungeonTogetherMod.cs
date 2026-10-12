@@ -7,7 +7,7 @@ using GungeonTogether.Networking.Sync;
 
 namespace GungeonTogether.Core
 {
-    [BepInPlugin("com.llamerrr.gungeontogether", "Gungeon Together", "0.6.0")]
+    [BepInPlugin("com.llamerrr.gungeontogether", "Gungeon Together", "0.7.0")]
     [BepInDependency("etgmodding.etg.mtgapi")]
     public class GungeonTogetherMod : BaseUnityPlugin
     {

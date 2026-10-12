@@ -301,15 +301,10 @@ namespace GungeonTogether.Networking.Steam
             return 0;
         }
 
-        private int _readPacketsCallCount = 0;
-        private const int READ_PACKETS_LOG_INTERVAL = 60;
         private float _nextReadErrorLogTime;
 
         private void ReadPackets()
         {
-            _readPacketsCallCount++;
-            if (_readPacketsCallCount % READ_PACKETS_LOG_INTERVAL == 0)
-                Debug.Log("[SteamP2P] ReadPackets called, checking for packets...");
             try
             {
                 var isAvailableMethod = SteamReflectionHelper.IsP2PPacketAvailableMethod;

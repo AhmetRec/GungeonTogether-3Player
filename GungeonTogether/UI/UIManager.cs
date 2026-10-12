@@ -234,17 +234,23 @@ namespace GungeonTogether.UI
 		_leaveButton.Click += OnLeaveClicked;
 
 			// Player list panel (inside the main panel)
-			_playerListPanel = new dfPanel();
+			GameObject playerListObject = new GameObject("GT_PlayerListPanel");
+			playerListObject.transform.parent = _panel.transform;
+			playerListObject.transform.localScale = Vector3.one;
+			_playerListPanel = playerListObject.AddComponent<dfPanel>();
 			_panel.AddControl(_playerListPanel);
 			_playerListPanel.RelativePosition = new Vector3(10f, 130f, 0f);
 			_playerListPanel.Width = _panel.Width - 20f;
 			_playerListPanel.Height = 120f;
-			_playerListPanel.Atlas = template?.Atlas;
+			_playerListPanel.Atlas = template != null ? template.Atlas : null;
 			_playerListPanel.BackgroundSprite = "blank";
 			_playerListPanel.Color = new Color32(0, 0, 0, 150);
 
 			// Scrollable area
-			_playerScrollPanel = new dfScrollPanel();
+			GameObject scrollObject = new GameObject("GT_PlayerScrollPanel");
+			scrollObject.transform.parent = _playerListPanel.transform;
+			scrollObject.transform.localScale = Vector3.one;
+			_playerScrollPanel = scrollObject.AddComponent<dfScrollPanel>();
 			_playerListPanel.AddControl(_playerScrollPanel);
 			_playerScrollPanel.RelativePosition = Vector3.zero;
 			_playerScrollPanel.Width = _playerListPanel.Width;
@@ -256,6 +262,7 @@ namespace GungeonTogether.UI
 			if (_subscribed) return;
 			SteamLobbyManager.Instance.OnPlayerListChanged += RefreshPlayerList;
 			_subscribed = true;
+			RefreshPlayerList();
 		}
 
 		private static void RefreshPlayerList()

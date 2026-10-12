@@ -142,7 +142,10 @@ namespace GungeonTogether.Networking
 
             if (_connectedClients.Contains(transportId))
             {
-                Debug.Log($"[Host] Player {playerId} already connected");
+                // Reliable Steam packets can still be retried before the client
+                // processes our acceptance. Re-acknowledge idempotently so a
+                // lost first response cannot leave it retrying forever.
+                SendConnectionAccepted(transportId);
                 return;
             }
 
@@ -178,13 +181,7 @@ namespace GungeonTogether.Networking
             // Accept the P2P session (already accepted via callback, but ensure it)
             AcceptP2PSession(transportId);
 
-            // Send ConnectionAcceptedPacket
-            var accept = new ConnectionAcceptedPacket
-            {
-                HostId = SteamReflectionHelper.GetLocalSteamId(),
-                ProtocolVersion = NetworkManager.ProtocolVersion
-            };
-            SendPacket(transportId, accept, reliable: true);
+            SendConnectionAccepted(transportId);
 
             // Give the newcomer an immediate roster: the host and every client
             // whose latest transform is already known.
@@ -195,6 +192,15 @@ namespace GungeonTogether.Networking
             SendCurrentWorldState(transportId);
             RoomSyncManager.Instance.SendSnapshotTo(transportId);
             EnemyProjectileSyncManager.Instance.SendSnapshotTo(transportId);
+        }
+
+        private void SendConnectionAccepted(ulong transportId)
+        {
+            SendPacket(transportId, new ConnectionAcceptedPacket
+            {
+                HostId = SteamReflectionHelper.GetLocalSteamId(),
+                ProtocolVersion = NetworkManager.ProtocolVersion
+            }, reliable: true);
         }
 
         private void SendHostJoinPacket(ulong targetId)
@@ -271,7 +277,7 @@ namespace GungeonTogether.Networking
             bool isFirstPosition = !_lastPlayerPositions.ContainsKey(senderId);
             _lastPlayerPositions[senderId] = packet;
 
-            PlayerManager.Instance.UpdateRemotePlayer(playerId, packet.Position, packet.Velocity, packet.Rotation, packet.FlipX, packet.Sequence, packet.SpriteId, packet.SpriteCollectionName, packet.IsDodgeRolling);
+            PlayerManager.Instance.UpdateRemotePlayer(playerId, packet.Position, packet.Velocity, packet.Rotation, packet.FlipX, packet.Sequence, packet.SpriteId, packet.SpriteCollectionName, packet.IsDodgeRolling, packet.CharacterPrefabKey);
 
             if (isFirstPosition)
             {
